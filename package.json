@@ -1,0 +1,14 @@
+{
+  "name": "to-do-inn",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "gulp dev",
+    "build": "gulp build"
+  },
+  "devDependencies": {
+    "gulp": "^5.0.1",
+    "gulp-sass": "^6.0.1",
+    "sass": "^1.106.1"
+  }
+}
