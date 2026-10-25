@@ -1,0 +1,92 @@
+// Browser defaults without removing keyboard focus or useful native controls.
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote,
+figure,
+pre,
+dl,
+dd,
+ul,
+ol {
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+}
+
+// Preserve bullets and numbering so lists remain recognizable and accessible.
+ul,
+ol {
+  padding-inline-start: 1.5em;
+}
+
+// Explicitly marked presentation lists can be styled without native markers.
+ul[role='list'],
+ol[role='list'] {
+  list-style: none;
+  padding: 0;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+img,
+video {
+  height: auto;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+textarea {
+  max-width: 100%;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}

@@ -1,0 +1,48 @@
+import React, { useEffect, useState } from 'react';
+import { AuthPages } from './auth/AuthPages.jsx';
+import { Workspace } from './workspace/Workspace.jsx';
+import { getSession } from './api.js';
+
+const routes = {
+  '/': 'login',
+  '/pages/register.html': 'register',
+  '/pages/forgot-password.html': 'recovery',
+  '/pages/registration-success.html': 'registration-success',
+  '/pages/workspace.html': 'workspace',
+};
+
+export function App() {
+  const route = routes[window.location.pathname] || 'login';
+  const [redirecting, setRedirecting] = useState(route === 'workspace');
+
+  useEffect(() => {
+    if (route === 'workspace') return;
+
+    getSession()
+      .then(({ user }) => {
+        if (user && route !== 'registration-success') {
+          window.location.replace('/pages/workspace.html');
+        } else if (route === 'registration-success' && !user) {
+          window.location.replace('/');
+        } else {
+          setRedirecting(false);
+        }
+      })
+      .catch(() => setRedirecting(false));
+  }, [route]);
+
+  useEffect(() => {
+    const titles = {
+      login: 'Вход — To Do Inn!',
+      register: 'Регистрация — To Do Inn!',
+      recovery: 'Восстановление пароля — To Do Inn!',
+      'registration-success': 'Регистрация — To Do Inn!',
+      workspace: 'Рабочее пространство — To Do Inn!',
+    };
+    document.title = titles[route] || titles.login;
+  }, [route]);
+
+  if (route === 'workspace') return <Workspace />;
+  if (redirecting) return <div className="app-loading" role="status">Загрузка…</div>;
+  return <AuthPages page={route} />;
+}
