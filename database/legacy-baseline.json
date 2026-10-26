@@ -1,0 +1,112 @@
+{
+    "users": {
+        "columns": {
+            "about": {"type": "text", "nullable": false, "identity": "", "default": "''::text"},
+            "account_type": {"type": "character varying(16)", "nullable": false, "identity": "", "default": "'individual'::character varying"},
+            "avatar_data": {"type": "bytea", "nullable": true, "identity": "", "default": null},
+            "avatar_mime": {"type": "character varying(24)", "nullable": true, "identity": "", "default": null},
+            "created_at": {"type": "timestamp with time zone", "nullable": false, "identity": "", "default": "CURRENT_TIMESTAMP"},
+            "email": {"type": "character varying(254)", "nullable": true, "identity": "", "default": null},
+            "id": {"type": "bigint", "nullable": false, "identity": "a", "default": null},
+            "password_hash": {"type": "text", "nullable": false, "identity": "", "default": null},
+            "secondary_email": {"type": "character varying(254)", "nullable": true, "identity": "", "default": null},
+            "username": {"type": "character varying(24)", "nullable": false, "identity": "", "default": null},
+            "username_changed_at": {"type": "timestamp with time zone", "nullable": true, "identity": "", "default": null}
+        },
+        "constraints": [
+            "CHECK ((((avatar_data IS NULL) AND (avatar_mime IS NULL)) OR ((avatar_data IS NOT NULL) AND ((avatar_mime)::text = ANY ((ARRAY['image/jpeg'::character varying, 'image/png'::character varying, 'image/webp'::character varying])::text[])))))",
+            "CHECK (((account_type)::text = ANY ((ARRAY['individual'::character varying, 'team'::character varying, 'corporate'::character varying])::text[])))",
+            "CHECK (((email IS NULL) OR (secondary_email IS NULL) OR ((email)::text <> (secondary_email)::text)))",
+            "CHECK (((username)::text ~ '^[A-Za-z][A-Za-z0-9_]{2,23}$'::text))",
+            "PRIMARY KEY (id)",
+            "UNIQUE (email)",
+            "UNIQUE (username)"
+        ],
+        "indexes": [
+            "UNIQUE USING btree (secondary_email) WHERE (secondary_email IS NOT NULL)"
+        ]
+    },
+    "boards": {
+        "columns": {
+            "board_type": {"type": "character varying(16)", "nullable": false, "identity": "", "default": "'personal'::character varying"},
+            "created_at": {"type": "timestamp with time zone", "nullable": false, "identity": "", "default": "CURRENT_TIMESTAMP"},
+            "description": {"type": "text", "nullable": false, "identity": "", "default": "''::text"},
+            "id": {"type": "bigint", "nullable": false, "identity": "a", "default": null},
+            "is_default": {"type": "boolean", "nullable": false, "identity": "", "default": "false"},
+            "name": {"type": "character varying(60)", "nullable": false, "identity": "", "default": null},
+            "user_id": {"type": "bigint", "nullable": false, "identity": "", "default": null}
+        },
+        "constraints": [
+            "CHECK (((board_type)::text = ANY ((ARRAY['personal'::character varying, 'community'::character varying, 'corporate'::character varying])::text[])))",
+            "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+            "PRIMARY KEY (id)",
+            "UNIQUE (id, user_id)",
+            "UNIQUE (user_id, name)"
+        ],
+        "indexes": [
+            "UNIQUE USING btree (user_id) WHERE is_default"
+        ]
+    },
+    "user_flags": {
+        "columns": {
+            "board_id": {"type": "bigint", "nullable": false, "identity": "", "default": null},
+            "color": {"type": "character varying(16)", "nullable": false, "identity": "", "default": "'blue'::character varying"},
+            "created_at": {"type": "timestamp with time zone", "nullable": false, "identity": "", "default": "CURRENT_TIMESTAMP"},
+            "id": {"type": "bigint", "nullable": false, "identity": "a", "default": null},
+            "name": {"type": "character varying(40)", "nullable": false, "identity": "", "default": null},
+            "user_id": {"type": "bigint", "nullable": false, "identity": "", "default": null}
+        },
+        "constraints": [
+            "CHECK (((color)::text = ANY ((ARRAY['blue'::character varying, 'violet'::character varying, 'green'::character varying, 'amber'::character varying, 'rose'::character varying])::text[])))",
+            "FOREIGN KEY (board_id, user_id) REFERENCES boards(id, user_id) ON DELETE CASCADE",
+            "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+            "PRIMARY KEY (id)",
+            "UNIQUE (board_id, user_id, name)",
+            "UNIQUE (id, user_id)",
+            "UNIQUE (id, user_id, board_id)"
+        ],
+        "indexes": []
+    },
+    "task_lists": {
+        "columns": {
+            "board_id": {"type": "bigint", "nullable": false, "identity": "", "default": null},
+            "created_at": {"type": "timestamp with time zone", "nullable": false, "identity": "", "default": "CURRENT_TIMESTAMP"},
+            "description": {"type": "text", "nullable": false, "identity": "", "default": "''::text"},
+            "flag_id": {"type": "bigint", "nullable": true, "identity": "", "default": null},
+            "id": {"type": "bigint", "nullable": false, "identity": "a", "default": null},
+            "is_important": {"type": "boolean", "nullable": false, "identity": "", "default": "false"},
+            "name": {"type": "character varying(80)", "nullable": false, "identity": "", "default": null},
+            "theme": {"type": "character varying(16)", "nullable": false, "identity": "", "default": "'blue'::character varying"},
+            "user_id": {"type": "bigint", "nullable": false, "identity": "", "default": null}
+        },
+        "constraints": [
+            "CHECK (((theme)::text = ANY ((ARRAY['blue'::character varying, 'violet'::character varying, 'green'::character varying, 'amber'::character varying, 'rose'::character varying])::text[])))",
+            "FOREIGN KEY (board_id, user_id) REFERENCES boards(id, user_id) ON DELETE CASCADE",
+            "FOREIGN KEY (flag_id, user_id, board_id) REFERENCES user_flags(id, user_id, board_id) ON DELETE SET NULL (flag_id)",
+            "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+            "PRIMARY KEY (id)",
+            "UNIQUE (board_id, name)"
+        ],
+        "indexes": []
+    },
+    "tasks": {
+        "columns": {
+            "created_at": {"type": "timestamp with time zone", "nullable": false, "identity": "", "default": "CURRENT_TIMESTAMP"},
+            "id": {"type": "bigint", "nullable": false, "identity": "a", "default": null},
+            "is_completed": {"type": "boolean", "nullable": false, "identity": "", "default": "false"},
+            "list_id": {"type": "bigint", "nullable": false, "identity": "", "default": null},
+            "sort_order": {"type": "bigint", "nullable": false, "identity": "", "default": "0"},
+            "title": {"type": "character varying(240)", "nullable": false, "identity": "", "default": null},
+            "user_id": {"type": "bigint", "nullable": false, "identity": "", "default": null}
+        },
+        "constraints": [
+            "CHECK ((length(TRIM(BOTH FROM title)) > 0))",
+            "FOREIGN KEY (list_id) REFERENCES task_lists(id) ON DELETE CASCADE",
+            "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+            "PRIMARY KEY (id)"
+        ],
+        "indexes": [
+            "USING btree (list_id, sort_order, id)"
+        ]
+    }
+}

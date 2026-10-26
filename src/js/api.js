@@ -1,6 +1,7 @@
 const authEndpoint = '/api/auth.php';
 const workspaceEndpoint = '/api/workspace.php';
 const profileEndpoint = '/api/profile.php';
+let sessionRequest = null;
 
 async function readResponse(response) {
   const result = await response.json();
@@ -10,8 +11,16 @@ async function readResponse(response) {
   return result.data;
 }
 
-export async function getSession() {
-  return readResponse(await fetch(authEndpoint, { credentials: 'same-origin' }));
+export function getSession() {
+  // App and the auth form mount together. Share their initial request so a cookie-less
+  // visit cannot create two sessions and pair one session's cookie with the other's CSRF token.
+  // Do not cache settled responses: login/logout rotate the session and token.
+  if (!sessionRequest) {
+    sessionRequest = fetch(authEndpoint, { credentials: 'same-origin' })
+      .then(readResponse)
+      .finally(() => { sessionRequest = null; });
+  }
+  return sessionRequest;
 }
 
 export async function getProfile() {

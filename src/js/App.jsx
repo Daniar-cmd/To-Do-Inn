@@ -42,7 +42,16 @@ export function App() {
     document.title = titles[route] || titles.login;
   }, [route]);
 
-  if (route === 'workspace') return <Workspace />;
-  if (redirecting) return <div className="app-loading" role="status">Загрузка…</div>;
-  return <AuthPages page={route} />;
+  const screen = route === 'workspace'
+    ? <Workspace />
+    : redirecting
+      ? <div className="app-loading" role="status">Загрузка…</div>
+      : <AuthPages page={route} />;
+
+  return (
+    <>
+      {screen}
+      {import.meta.env.DEV && <div className="development-badge">Тестовая версия</div>}
+    </>
+  );
 }

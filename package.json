@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "vite --config vite.config.mjs",
+    "dev:api": "php artisan serve --env=laravel --no-reload --host=127.0.0.1 --port=8001",
     "dev:styles": "gulp dev",
-    "build": "gulp build && vite build --config vite.config.mjs"
+    "build": "gulp build && vite build --config vite.config.mjs",
+    "test:frontend": "node --test tests/js/*.test.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",

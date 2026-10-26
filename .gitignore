@@ -1,6 +1,12 @@
 .env
+.env.*
+!.env.example
+!.env.*.example
 node_modules/
 dist/
+/vendor/
+/composer.phar
+/.phpunit.cache/
 .DS_Store
 .vscode/
 .opencode/
