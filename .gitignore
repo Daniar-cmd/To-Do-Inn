@@ -4,6 +4,7 @@
 !.env.*.example
 node_modules/
 dist/
+/frontend/css/
 /vendor/
 /composer.phar
 /.phpunit.cache/

@@ -2,18 +2,18 @@ const { src, dest, watch, series } = require('gulp');
 const sass = require('gulp-sass')(require('sass'));
 
 function styles() {
-  return src('src/scss/style.scss')
+  return src('frontend/scss/style.scss')
     .pipe(sass().on('error', sass.logError))
-    .pipe(dest('public/css'));
+    .pipe(dest('frontend/css'));
 }
 
 function buildStyles() {
-  return src('src/scss/style.scss')
+  return src('frontend/scss/style.scss')
     .pipe(sass({ style: 'compressed' }).on('error', sass.logError))
-    .pipe(dest('public/css'));
+    .pipe(dest('frontend/css'));
 }
 
 exports.dev = series(styles, function watchStyles() {
-  return watch('src/scss/**/*.scss', styles);
+  return watch('frontend/scss/**/*.scss', styles);
 });
 exports.build = buildStyles;

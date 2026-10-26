@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const source = await readFile(new URL('../../src/js/api.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../frontend/js/api.js', import.meta.url), 'utf8');
 
 async function freshApi() {
   // Load the browser ES module without changing the project's CommonJS Gulp configuration.

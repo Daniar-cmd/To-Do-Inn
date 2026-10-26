@@ -41,13 +41,13 @@ Production-сборка frontend создаётся локально в `dist/`.
    npm run dev
    ```
 
-   Откройте <http://localhost:5173>. Vite проксирует все `/api` на Laravel `127.0.0.1:8001`. `dev:api` запускает `php artisan serve --env=laravel --no-reload --host=127.0.0.1 --port=8001`; флаг `--no-reload` сохраняет нужное окружение дочернего сервера.
+    Откройте <http://localhost:5173>. Vite обслуживает исходники из `frontend/` и проксирует `/api` и `/favicon.svg` на Laravel `127.0.0.1:8001`. `dev:api` запускает `php artisan serve --env=laravel --no-reload --host=127.0.0.1 --port=8001`; флаг `--no-reload` сохраняет нужное окружение дочернего сервера.
 
    **Не используйте `php -S 127.0.0.1:8000 -t public` для основного приложения:** эта старая команда напрямую запускает legacy PHP и другую сессию. Не запускайте Laravel без `--env=laravel`, пока исходный `.env` сохранён для legacy.
 
    В этой рабочей копии `/usr/local/bin/node` — старый Node 20.17, а `/opt/homebrew/bin/node` — уже установленный Node 26. Для совместимой среды можно использовать `PATH="/opt/homebrew/bin:$PATH" npm run dev` (также для `build`, `test:frontend`, `dev:styles`), без переустановки Node.
 
-Для разработки SCSS используйте `npm run dev:styles` в третьем терминале. `npm run build` компилирует SCSS через Gulp и собирает production-страницы React через Vite в `dist/`. Каталог `public/` с исходными HTML-оболочками и PHP API при сборке не перезаписывается; для ручного production-развёртывания подготовьте содержимое `dist/` вместе с PHP-файлами приложения.
+Для разработки SCSS используйте `npm run dev:styles` в третьем терминале. Gulp пишет скомпилированный CSS в `frontend/css/style.css`; `npm run build` затем собирает HTML/React/CSS в `dist/`. Каталог `public/` — PHP web-root с сохранёнными legacy API и статикой, сборка его не перезаписывает. Размещение содержимого `dist/` рядом с `public/index.php` требует отдельного ручного шага при production-выпуске. Границы каталогов описаны в [architecture.md](architecture.md).
 
 ## Авторизация
 
@@ -61,7 +61,7 @@ Production-сборка frontend создаётся локально в `dist/`.
 
 ## Переход на Laravel
 
-**Локальное приложение переключено на Laravel.** React/Vite использует авторизацию, профиль и workspace Laravel на порту 8001. Сохранены URL страниц и JSON-контракты. При первом переходе войдите заново: native PHP-сессии не переносятся. В `src/js/api.js` параллельные начальные чтения сессии объединены в один запрос, чтобы cookie и CSRF принадлежали одной сессии; завершённые ответы не кешируются.
+**Локальное приложение переключено на Laravel.** React/Vite использует авторизацию, профиль и workspace Laravel на порту 8001. Сохранены URL страниц и JSON-контракты. При первом переходе войдите заново: native PHP-сессии не переносятся. В `frontend/js/api.js` параллельные начальные чтения сессии объединены в один запрос, чтобы cookie и CSRF принадлежали одной сессии; завершённые ответы не кешируются.
 
 **Выбрана отдельная `todo_inn_laravel_dev`, а не исходная legacy-БД.** Более поздние изменения из legacy автоматически не копировались. Исходная БД, `.env` и standalone `public/api/*.php` сохранены. Это локальный переход, **не production-деплой**.
 
@@ -71,6 +71,9 @@ Production-сборка frontend создаётся локально в `dist/`.
 
 ### Структура
 
+- `frontend/` — исходные HTML-страницы, React (`frontend/js/`) и SCSS (`frontend/scss/`); генерируемый `frontend/css/` игнорируется Git. `vite.config.mjs` сохраняет прежние URL страниц.
+- `public/` — PHP web-root с `index.php`, `favicon.svg`, сохранёнными `api/*.php` и legacy `css/style.css`; Gulp не меняет эти файлы.
+- Подробная схема запросов, сборки и окружений — в [architecture.md](architecture.md).
 - `app/Models/` — `User`, `Board`, `TaskList`, `UserFlag`, `Task`, связи и типы полей существующей БД.
 - `app/Console/Commands/BaselineLegacyDatabase.php` — безопасное принятие legacy-схемы.
 - `bootstrap/`, `config/`, `routes/`, `artisan`, `public/index.php` — основа Laravel.
@@ -244,14 +247,14 @@ npm run test:frontend
 
 Проверен реальный React-интерфейс в Chromium через Vite → Laravel на изолированной тестовой БД: регистрация, переход в workspace, доска/список/задача, переименование/выполнение задачи, поиск, сохранение профиля/логина/пароля, выход, вход с новым паролем, сохранность задач после перезагрузки и удаление доски. Браузерный инструмент устанавливался отдельно во временный каталог, без зависимостей в проекте. Автоматические frontend-тесты фиксируют обнаруженную гонку начальной cookie/CSRF-сессии.
 
-Для осознанного **локального** отката можно остановить Laravel, вернуть proxy `/api` в `vite.config.mjs` на `http://127.0.0.1:8000`, запустить старый `php -S 127.0.0.1:8000 -t public` и заново войти. Это возврат к **другой исходной БД**: новые записи Laravel туда не попадут. Не объединяйте и не восстанавливайте базы поверх друг друга; при необходимости переноса данных нужен отдельный план. Изменение proxy применяется после перезапуска Vite.
+Для осознанного **локального** отката остановите Laravel и перенастройте proxy **`/api` и `/favicon.svg`** в `vite.config.mjs` на `http://127.0.0.1:8000`. Запустите старый `php -S 127.0.0.1:8000 -t public` и перезапустите Vite. Через Vite страницы из `frontend/` доступны по прежним URL, legacy API работает с отдельной исходной БД и требует повторного входа. Если необходимо обслуживать HTML напрямую с порта 8000, сначала вручную разместите собранные страницы и assets из `dist/` в `public/`, **не удаляя** `public/index.php`, `public/api/`, `public/css/style.css` и `public/favicon.svg`. Это не автоматический откат и не синхронизация данных: новые записи Laravel в legacy-БД не появятся. Не восстанавливайте базы поверх друг друга; перенос данных требует отдельного плана.
 
 ### Production — отдельный выпуск, пока не выполнен
 
 1. Сделать резервную копию production-БД и проверить восстановление в отдельную БД. На время окончательного переноса остановить запись, чтобы не разойтись в данных.
 2. Подготовить production-переменные `APP_ENV=production`, `APP_DEBUG=false`, постоянный `APP_KEY`, `DB_*` для существующей production-БД, `SESSION_SECURE_COOKIE=true`, файловые session/cache и права на `storage/` / `bootstrap/cache/`. Не использовать `.env.laravel` с локальными секретами и не копировать dev/test-БД. Production Laravel обычно читает свой `.env`, без `--env=laravel`.
 3. Проверить схему read-only командой `legacy:baseline`, затем согласовать принятие baseline (`--apply --force`) и только необходимые миграции. Не запускать `schema.sql`, `migrate:fresh`, `migrate:refresh`, `db:wipe`.
-4. Собрать frontend локально (`npm run build`), установить PHP production-зависимости (`composer install --no-dev --optimize-autoloader`), разместить собранные HTML/assets из `dist/` в PHP document root `public/`.
+4. Собрать frontend локально (`npm run build`), установить PHP production-зависимости (`composer install --no-dev --optimize-autoloader`), вручную разместить собранные HTML/assets из `dist/` в PHP document root `public/`, не удаляя `index.php`, `api/`, `favicon.svg` и сохранённый legacy CSS.
 5. Настроить Caddy/PHP-FPM так, чтобы **все `/api/*` попадали в `public/index.php`**, несмотря на физические legacy-файлы. Обычный `php_fastcgi` с проверкой существующих файлов может запустить старый API в обход Laravel — такую конфигурацию использовать нельзя. Также запретить прямое исполнение других PHP-файлов кроме front controller. `server.php` — только dev-router и в production не помогает.
 6. Проверить HTTPS/cookies/CSRF, регистрацию/вход/профиль/workspace, общий rate limit/защиту публичного доступа и отсутствие прямого legacy fallback. Предупредить пользователей о повторном входе. Зафиксировать план возврата к предыдущему коду и схеме без перезаписи новых данных.
 

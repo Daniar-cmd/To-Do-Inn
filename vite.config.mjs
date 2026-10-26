@@ -4,11 +4,11 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
-const publicRoot = resolve(projectRoot, 'public');
+const frontendRoot = resolve(projectRoot, 'frontend');
 
 export default defineConfig({
   plugins: [react()],
-  root: publicRoot,
+  root: frontendRoot,
   publicDir: false,
   server: {
     host: '127.0.0.1',
@@ -16,6 +16,8 @@ export default defineConfig({
     proxy: {
       // All APIs now use Laravel sessions; never mix this with the native PHP server.
       '/api': 'http://127.0.0.1:8001',
+      // The favicon is served from the PHP document root, which Vite must not copy into dist.
+      '/favicon.svg': 'http://127.0.0.1:8001',
     },
   },
   build: {
@@ -24,11 +26,11 @@ export default defineConfig({
     assetsDir: 'assets',
     rollupOptions: {
       input: {
-        login: resolve(publicRoot, 'index.html'),
-        register: resolve(publicRoot, 'pages/register.html'),
-        recovery: resolve(publicRoot, 'pages/forgot-password.html'),
-        registrationSuccess: resolve(publicRoot, 'pages/registration-success.html'),
-        workspace: resolve(publicRoot, 'pages/workspace.html'),
+        login: resolve(frontendRoot, 'index.html'),
+        register: resolve(frontendRoot, 'pages/register.html'),
+        recovery: resolve(frontendRoot, 'pages/forgot-password.html'),
+        registrationSuccess: resolve(frontendRoot, 'pages/registration-success.html'),
+        workspace: resolve(frontendRoot, 'pages/workspace.html'),
       },
     },
   },

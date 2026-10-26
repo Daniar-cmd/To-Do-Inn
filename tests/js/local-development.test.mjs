@@ -7,8 +7,11 @@ import { loadConfigFromFile } from 'vite';
 test('the frontend uses Laravel, and production assets cannot overwrite the PHP document root', async () => {
   const { config } = await loadConfigFromFile({ command: 'serve', mode: 'development' });
   assert.equal(config.server.proxy['/api'], 'http://127.0.0.1:8001');
+  assert.equal(config.server.proxy['/favicon.svg'], 'http://127.0.0.1:8001');
+  assert.equal(config.root, resolve('frontend'));
   assert.equal(config.build.outDir, resolve('dist'));
   assert.notEqual(config.build.outDir, config.root);
+  assert.notEqual(config.build.outDir, resolve('public'));
   assert.equal(config.publicDir, false);
 });
 
