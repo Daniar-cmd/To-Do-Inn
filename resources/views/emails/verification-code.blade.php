@@ -1,3 +1,5 @@
+Здравствуйте{{ $recipientName !== '' ? ' '.$recipientName : '' }}!
+
 To Do Inn!
 Подтверждение электронной почты
 

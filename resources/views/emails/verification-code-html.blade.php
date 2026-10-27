@@ -19,6 +19,7 @@
                     <tr>
                         <td style="padding:38px 40px 34px;border:1px solid #e0e7f0;border-radius:16px;background-color:#ffffff;">
                             <p style="margin:0 0 10px;color:#3478d4;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;">Подтверждение почты</p>
+                            <p style="margin:0 0 12px;color:#617187;font-size:15px;line-height:1.6;">Здравствуйте{{ $recipientName !== '' ? ' '.$recipientName : '' }}!</p>
                             <h1 style="margin:0 0 14px;color:#18334f;font-size:26px;line-height:1.3;font-weight:700;">Ваш код регистрации</h1>
                             <p style="margin:0 0 26px;color:#617187;font-size:15px;line-height:1.65;">Введите этот код на странице регистрации, чтобы подтвердить адрес электронной почты.</p>
                             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0 0 22px;">

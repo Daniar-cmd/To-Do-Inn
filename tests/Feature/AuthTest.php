@@ -6,6 +6,7 @@ use App\Models\Board;
 use App\Models\User;
 use App\Mail\EmailVerificationCode;
 use App\Mail\CorporateAccountInvitation;
+use App\Mail\PasswordResetLink;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -298,6 +299,8 @@ class AuthTest extends DatabaseTestCase
         $invitee->forceFill([
             'username' => '@Existing'.bin2hex(random_bytes(3)),
             'email' => 'existing-admin@example.com',
+            'first_name' => 'Данияр',
+            'middle_name' => 'Рафаилевич',
         ])->save();
         $input = $this->registration([
             'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Ромашка',
@@ -311,7 +314,8 @@ class AuthTest extends DatabaseTestCase
         $this->assertDatabaseHas('corporate_account_members', [
             'email' => 'existing-admin@example.com', 'role' => 'support', 'user_id' => null,
         ]);
-        Mail::assertSent(CorporateAccountInvitation::class, fn (CorporateAccountInvitation $mail): bool => $mail->hasTo('existing-admin@example.com'));
+        Mail::assertSent(CorporateAccountInvitation::class, fn (CorporateAccountInvitation $mail): bool => $mail->hasTo('existing-admin@example.com')
+            && $mail->recipientName === 'Данияр Рафаилевич');
     }
 
     public function test_admin_identifier_validation_rejects_unknown_usernames_and_accepts_registered_usernames(): void
@@ -368,6 +372,31 @@ class AuthTest extends DatabaseTestCase
             'email' => 'taken@example.com',
             'account_type' => 'corporate',
         ])->assertOk()->assertJsonPath('data.available', true);
+    }
+
+    public function test_registration_email_lookup_reports_existing_account_types_and_blocks_fully_used_email(): void
+    {
+        Mail::fake();
+        $email = 'email-status-'.bin2hex(random_bytes(5)).'@example.com';
+        $user = $this->createUser();
+        $user->forceFill(['email' => $email, 'account_type' => 'individual'])->save();
+
+        $this->postAuth(['action' => 'check_registration_email', 'email' => strtoupper($email)])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['existing_accounts' => ['individual']]]);
+
+        DB::table('corporate_accounts')->insert([
+            'root_username' => '@EmailStatus'.bin2hex(random_bytes(3)),
+            'root_email' => $email,
+            'root_password_hash' => Hash::make('Corporate123!'),
+            'organization_name' => 'Email status',
+        ]);
+
+        $this->postAuth(['action' => 'check_registration_email', 'email' => $email])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['existing_accounts' => ['individual', 'corporate']]]);
+        $this->postAuth(['action' => 'send_verification_code', 'email' => $email])
+            ->assertConflict()->assertJsonPath('error', 'Этот e-mail уже связан с личным и корпоративным аккаунтами. Войдите в нужный аккаунт или восстановите пароль.');
+        Mail::assertNothingOutgoing();
+        $this->assertNull(Cache::get('email-verification-code:'.hash('sha256', $email)));
     }
 
     public function test_corporate_administrator_invitation_is_emailed_and_linked_after_acceptance_and_signup(): void
@@ -450,9 +479,18 @@ class AuthTest extends DatabaseTestCase
 
         $user = $this->createUser();
         $user->forceFill(['email' => 'taken@example.com'])->save();
-        $this->postAuth(['action' => 'send_verification_code', 'email' => 'TAKEN@example.com'])->assertOk();
+        $this->postAuth(['action' => 'send_verification_code', 'email' => 'TAKEN@example.com'])
+            ->assertOk()->assertJsonPath('data.existing_accounts', ['individual']);
 
-        Mail::assertSent(EmailVerificationCode::class);
+        $code = null;
+        Mail::assertSent(EmailVerificationCode::class, function (EmailVerificationCode $mail) use (&$code): bool {
+            $code = $mail->code;
+
+            return true;
+        });
+        $this->assertIsString($code);
+        $this->postAuth(['action' => 'verify_email_code', 'email' => 'TAKEN@example.com', 'code' => $code])
+            ->assertOk()->assertJsonPath('data.existing_accounts', ['individual']);
     }
 
     public function test_correct_verification_code_is_consumed_and_bound_to_the_session(): void
@@ -473,6 +511,78 @@ class AuthTest extends DatabaseTestCase
             ->assertOk()->assertExactJson(['success' => true, 'data' => ['verified' => true]]);
         $this->assertSame($email, $this->app['session.store']->get('registration_verified_email'));
         $this->assertNull(Cache::get('email-verification-code:'.hash('sha256', $email)));
+    }
+
+    public function test_password_reset_link_is_sent_for_personal_account_and_only_token_hash_is_cached(): void
+    {
+        Mail::fake();
+        $email = 'reset-'.bin2hex(random_bytes(5)).'@example.com';
+        $user = $this->createUser();
+        $user->forceFill(['email' => $email, 'account_type' => 'individual', 'first_name' => 'Данияр', 'middle_name' => 'Рафаилевич'])->save();
+
+        $response = $this->postAuth(['action' => 'request_password_reset', 'email' => strtoupper($email)])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['sent' => true]]);
+
+        $resetUrl = null;
+        Mail::assertSent(PasswordResetLink::class, function (PasswordResetLink $mail) use (&$resetUrl, $email): bool {
+            $resetUrl = $mail->resetUrl;
+
+            return $mail->hasTo($email) && $mail->recipientName === 'Данияр Рафаилевич';
+        });
+        parse_str(ltrim((string) parse_url((string) $resetUrl, PHP_URL_FRAGMENT), '#'), $query);
+        $token = $query['token'] ?? '';
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', $token);
+        $tokenHash = hash('sha256', $token);
+        $cached = Cache::get('password-reset-token:'.$tokenHash);
+        $this->assertSame(['user_id' => (int) $user->id, 'email' => $email], $cached);
+        $this->assertStringNotContainsString($token, $response->getContent());
+    }
+
+    public function test_unknown_email_gets_the_same_password_reset_response_without_email(): void
+    {
+        Mail::fake();
+
+        $this->postAuth(['action' => 'request_password_reset', 'email' => 'missing@example.com'])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['sent' => true]]);
+
+        Mail::assertNothingOutgoing();
+    }
+
+    public function test_password_reset_changes_hash_and_consumes_link_once(): void
+    {
+        Mail::fake();
+        $email = 'reset-'.bin2hex(random_bytes(5)).'@example.com';
+        $user = $this->createUser();
+        $user->forceFill(['email' => $email, 'account_type' => 'individual'])->save();
+        $oldHash = $user->password_hash;
+        $this->postAuth(['action' => 'request_password_reset', 'email' => $email])->assertOk();
+
+        $token = null;
+        Mail::assertSent(PasswordResetLink::class, function (PasswordResetLink $mail) use (&$token): bool {
+            parse_str(ltrim((string) parse_url($mail->resetUrl, PHP_URL_FRAGMENT), '#'), $query);
+            $token = $query['token'] ?? null;
+
+            return true;
+        });
+        $this->assertIsString($token);
+        $tokenHash = hash('sha256', $token);
+
+        $this->postAuth([
+            'action' => 'reset_password', 'token' => $token,
+            'password' => 'NewPassword123!', 'confirm_password' => 'NewPassword123!',
+        ])->assertOk()->assertExactJson(['success' => true, 'data' => ['reset' => true]]);
+
+        $user->refresh();
+        $this->assertNotSame($oldHash, $user->password_hash);
+        $this->assertTrue(Hash::check('NewPassword123!', $user->password_hash));
+        $this->assertSame('argon2id', password_get_info($user->password_hash)['algoName']);
+        $this->assertNull(Cache::get('password-reset-token:'.$tokenHash));
+
+        $this->postAuth([
+            'action' => 'reset_password', 'token' => $token,
+            'password' => 'AnotherPassword123!', 'confirm_password' => 'AnotherPassword123!',
+        ])->assertUnprocessable();
+        $this->assertTrue(Hash::check('NewPassword123!', $user->fresh()->password_hash));
     }
 
     public function test_registration_cannot_skip_email_verification(): void
@@ -629,6 +739,32 @@ class AuthTest extends DatabaseTestCase
         $this->assertNotSame($oldId, $this->app['session.store']->getId());
         $this->assertNotSame($oldToken, $this->app['session.store']->token());
         $this->getAuth()->assertJsonPath('data.user.id', $id);
+    }
+
+    public function test_email_login_offers_account_choice_for_shared_personal_and_corporate_email(): void
+    {
+        $email = 'dual-login-'.bin2hex(random_bytes(5)).'@example.com';
+        $personal = $this->createUser();
+        $personal->forceFill(['email' => $email, 'account_type' => 'individual'])->save();
+        $corporateId = DB::table('corporate_accounts')->insertGetId([
+            'root_username' => '@DualRoot'.bin2hex(random_bytes(3)),
+            'root_email' => $email,
+            'root_password_hash' => Hash::make('Corporate123!'),
+            'organization_name' => 'Dual login',
+        ]);
+
+        $this->postAuth(['action' => 'check_login_email', 'email' => strtoupper($email)])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['account_choices' => ['individual', 'corporate']]]);
+        $this->postAuth(['action' => 'login', 'username' => strtoupper($email), 'password' => 'TestPassword123'])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['account_choices' => ['individual', 'corporate']]]);
+        $this->assertGuest();
+
+        $this->postAuth(['action' => 'login', 'username' => $email, 'password' => 'TestPassword123', 'account_type' => 'individual'])
+            ->assertOk()->assertJsonPath('data.user.id', $personal->id)->assertJsonPath('data.corporate_account', null);
+        $this->postAuth(['action' => 'logout'])->assertOk();
+
+        $this->postAuth(['action' => 'login', 'username' => $email, 'password' => 'Corporate123!', 'account_type' => 'corporate'])
+            ->assertOk()->assertJsonPath('data.user', null)->assertJsonPath('data.corporate_account.id', $corporateId);
     }
 
     public function test_wrong_password_and_unknown_user_have_the_same_error(): void

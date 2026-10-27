@@ -95,7 +95,38 @@ function AuthHeader({ eyebrow, title, children, progress }) {
   );
 }
 
-function PasswordField({ id, label, value, onChange, visible, onToggle, autoComplete, placeholder, hint, feedback, invalid, inputRef, onKeyDown }) {
+function createSecurePassword() {
+  const groups = ['abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '0123456789', '!#$%&()*+,-./:;=?@[]^_{|}~'];
+  const all = groups.join('');
+  const randomIndex = (limit) => {
+    const values = new Uint32Array(1);
+    const ceiling = Math.floor(0x100000000 / limit) * limit;
+    do { window.crypto.getRandomValues(values); } while (values[0] >= ceiling);
+    return values[0] % limit;
+  };
+  const chars = groups.map((group) => group[randomIndex(group.length)]);
+  while (chars.length < 16) chars.push(all[randomIndex(all.length)]);
+  for (let index = chars.length - 1; index > 0; index--) {
+    const swapIndex = randomIndex(index + 1);
+    [chars[index], chars[swapIndex]] = [chars[swapIndex], chars[index]];
+  }
+  return chars.join('');
+}
+
+function registrationEmailWarning(accounts) {
+  if (accounts.includes('individual') && accounts.includes('corporate')) {
+    return 'Нельзя зарегистрировать аккаунт: этот e-mail уже занят и личным, и корпоративным профилем. Войдите в существующий аккаунт или восстановите пароль.';
+  }
+  if (accounts.includes('individual')) {
+    return 'У этого e-mail уже есть личный профиль. Можно подтвердить почту и создать корпоративный аккаунт.';
+  }
+  if (accounts.includes('corporate')) {
+    return 'У этого e-mail уже есть корпоративный профиль. Можно подтвердить почту и создать личный аккаунт.';
+  }
+  return '';
+}
+
+function PasswordField({ id, label, value, onChange, visible, onToggle, autoComplete, placeholder, hint, feedback, invalid, inputRef, onKeyDown, maxLength = 128 }) {
   return (
     <div className="auth-form__field">
       <label htmlFor={id}>{label}</label>
@@ -110,6 +141,7 @@ function PasswordField({ id, label, value, onChange, visible, onToggle, autoComp
           value={value}
           onChange={onChange}
           onKeyDown={onKeyDown}
+          maxLength={maxLength}
           aria-invalid={invalid || undefined}
           className={invalid ? 'is-invalid' : undefined}
           required
@@ -151,6 +183,8 @@ function LoginPage() {
   const { csrfToken, connectionError } = useCsrfToken();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [accountChoices, setAccountChoices] = useState([]);
+  const [loginAccountType, setLoginAccountType] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [message, setMessage] = useState('');
   const [loginInvalid, setLoginInvalid] = useState({ username: false, password: false });
@@ -168,6 +202,31 @@ function LoginPage() {
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [username, password]);
 
+  useEffect(() => {
+    if (!csrfToken || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username)) {
+      setAccountChoices([]);
+      setLoginAccountType('');
+      return undefined;
+    }
+
+    let current = true;
+    const timer = window.setTimeout(() => {
+      sendAuthRequest('check_login_email', { email: username }, csrfToken)
+        .then((result) => {
+          if (!current) return;
+          const choices = Array.isArray(result.account_choices) ? result.account_choices : [];
+          setAccountChoices(choices);
+          setLoginAccountType('');
+        })
+        .catch(() => {});
+    }, 300);
+
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [username, csrfToken]);
+
   async function handleSubmit(event) {
     event.preventDefault();
     if (!username || !password) {
@@ -178,7 +237,15 @@ function LoginPage() {
     setBusy(true);
     setMessage('');
     try {
-      const result = await sendAuthRequest('login', { username, password }, csrfToken);
+      const payload = { username, password };
+      if (loginAccountType) payload.account_type = loginAccountType;
+      const result = await sendAuthRequest('login', payload, csrfToken);
+      if (Array.isArray(result.account_choices)) {
+        setAccountChoices(result.account_choices);
+        setLoginAccountType('');
+        setBusy(false);
+        return;
+      }
       navigationApprovedRef.current = true;
       window.location.assign(result.corporate_account ? '/pages/organization-root.html' : '/pages/workspace.html');
     } catch (error) {
@@ -194,24 +261,39 @@ function LoginPage() {
         Войдите, чтобы продолжить работу со своими задачами.
       </AuthHeader>
       <form className="auth-form" noValidate onSubmit={handleSubmit}>
-        <div className="auth-form__field">
-          <label htmlFor="username">Логин</label>
-          <input id="username" name="username" autoComplete="username" placeholder="Ваш логин" value={username} aria-invalid={loginInvalid.username} onChange={(event) => { setUsername(event.target.value); setLoginInvalid((current) => ({ ...current, username: false })); setMessage(''); }} required />
+        <div className="login-credentials">
+          <div className="auth-form__field">
+            <label htmlFor="username">Логин или email</label>
+            <input id="username" name="username" autoComplete="username" placeholder="Ваш логин или email" value={username} aria-invalid={loginInvalid.username} onChange={(event) => { setUsername(event.target.value); setAccountChoices([]); setLoginAccountType(''); setLoginInvalid((current) => ({ ...current, username: false })); setMessage(''); }} required />
+          </div>
+          <PasswordField
+            id="password"
+            label="Пароль"
+            value={password}
+            onChange={(event) => { setPassword(event.target.value); setLoginInvalid((current) => ({ ...current, password: false })); setMessage(''); }}
+            invalid={loginInvalid.password}
+            visible={passwordVisible}
+            onToggle={() => setPasswordVisible((current) => !current)}
+            autoComplete="current-password"
+            placeholder="Ваш пароль"
+          />
+          {accountChoices.length > 1 && <div className="login-account-choice">
+            <span className="login-account-choice__label">Войти в</span>
+            <div className="login-account-choice__slider" role="group" aria-label="Выберите аккаунт для входа">
+              <button type="button" className={loginAccountType === 'individual' ? 'is-selected' : ''} aria-pressed={loginAccountType === 'individual'} onClick={() => setLoginAccountType('individual')}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="10" cy="6" r="3" /><path d="M4 17v-1a6 6 0 0 1 12 0v1" /></svg>
+                Личный
+              </button>
+              <button type="button" className={loginAccountType === 'corporate' ? 'is-selected' : ''} aria-pressed={loginAccountType === 'corporate'} onClick={() => setLoginAccountType('corporate')}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2" /><path d="M7 7h1m4 0h1M7 10h1m4 0h1M8 17v-3h4v3" /></svg>
+                Корпоративный
+              </button>
+            </div>
+          </div>}
         </div>
-        <PasswordField
-          id="password"
-          label="Пароль"
-          value={password}
-          onChange={(event) => { setPassword(event.target.value); setLoginInvalid((current) => ({ ...current, password: false })); setMessage(''); }}
-          invalid={loginInvalid.password}
-          visible={passwordVisible}
-          onToggle={() => setPasswordVisible((current) => !current)}
-          autoComplete="current-password"
-          placeholder="Ваш пароль"
-        />
         <a className="auth-form__forgot" href="/pages/forgot-password.html">Забыли пароль?</a>
         {(message || connectionError) && <p className="auth-form__status" role="alert">{message || connectionError}</p>}
-        <button className="auth-form__submit" type="submit" disabled={!csrfToken || busy}>{busy ? 'Входим…' : 'Войти'}</button>
+        <button className="auth-form__submit" type="submit" disabled={!csrfToken || busy || (accountChoices.length > 1 && !loginAccountType)}>{busy ? 'Входим…' : 'Войти'}</button>
       </form>
       <p className="auth-card__footer">Нет аккаунта? <a href="/pages/register.html">Зарегистрироваться</a></p>
     </AuthLayout>
@@ -227,6 +309,8 @@ function RegisterPage() {
   const [localTestCode, setLocalTestCode] = useState('');
   const [sendingEmailCode, setSendingEmailCode] = useState(false);
   const [emailInUse, setEmailInUse] = useState(false);
+  const [existingEmailAccounts, setExistingEmailAccounts] = useState([]);
+  const [emailAccountNotice, setEmailAccountNotice] = useState('');
   const [resendWait, setResendWait] = useState(0);
   const [verifyingCode, setVerifyingCode] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
@@ -272,6 +356,32 @@ function RegisterPage() {
     const timer = window.setTimeout(() => setResendWait((seconds) => Math.max(0, seconds - 1)), 1000);
     return () => window.clearTimeout(timer);
   }, [resendWait]);
+
+  useEffect(() => {
+    if (identityStep !== 'email' || !csrfToken || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      if (identityStep === 'email' && form.email === '') {
+        setExistingEmailAccounts([]);
+        setEmailAccountNotice('');
+      }
+      return undefined;
+    }
+
+    let current = true;
+    const timer = window.setTimeout(() => {
+      sendAuthRequest('check_registration_email', { email: form.email }, csrfToken)
+        .then((result) => {
+          if (!current) return;
+          const accounts = Array.isArray(result.existing_accounts) ? result.existing_accounts : [];
+          setExistingEmailAccounts(accounts);
+          setEmailAccountNotice(registrationEmailWarning(accounts));
+        })
+        .catch(() => {});
+    }, 350);
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [identityStep, csrfToken, form.email]);
 
   useEffect(() => {
     if (identityStep === 'email-code' && emailCodeSent) codeInputRef.current?.focus();
@@ -370,6 +480,8 @@ function RegisterPage() {
       setLocalTestCode('');
       setEmailCode('');
       setEmailInUse(false);
+      setExistingEmailAccounts([]);
+      setEmailAccountNotice('');
       setResendWait(0);
       setEmailVerified(false);
     }
@@ -394,21 +506,7 @@ function RegisterPage() {
     const isPasswordRefresh = hasGeneratedPassword;
     setIsGeneratingPassword(true);
     setHasGeneratedPassword(true);
-    const groups = ['abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '0123456789', '!#$%&()*+,-./:;=?@[]^_{|}~'];
-    const all = groups.join('');
-    const randomIndex = (limit) => {
-      const values = new Uint32Array(1);
-      const ceiling = Math.floor(0x100000000 / limit) * limit;
-      do { window.crypto.getRandomValues(values); } while (values[0] >= ceiling);
-      return values[0] % limit;
-    };
-    const chars = groups.map((group) => group[randomIndex(group.length)]);
-    while (chars.length < 16) chars.push(all[randomIndex(all.length)]);
-    for (let index = chars.length - 1; index > 0; index--) {
-      const swapIndex = randomIndex(index + 1);
-      [chars[index], chars[swapIndex]] = [chars[swapIndex], chars[index]];
-    }
-    const password = chars.join('');
+    const password = createSecurePassword();
     setForm((current) => ({ ...current, password, confirmation: password }));
     setShowConfirmation(true);
     setPasswordCopyStatus('');
@@ -532,6 +630,9 @@ function RegisterPage() {
     setEmailInUse(false);
     try {
       const result = await sendAuthRequest('send_verification_code', { email: form.email }, csrfToken);
+      const accounts = Array.isArray(result.existing_accounts) ? result.existing_accounts : existingEmailAccounts;
+      setExistingEmailAccounts(accounts);
+      setEmailAccountNotice(registrationEmailWarning(accounts));
       setLocalTestCode(typeof result.test_code === 'string' ? result.test_code : '');
       setEmailCode('');
       setInvalidEmailCode(false);
@@ -540,6 +641,10 @@ function RegisterPage() {
       setIdentityStep('email-code');
     } catch (error) {
       if (error.message === 'Этот e-mail уже используется.') setEmailInUse(true);
+      else if (error.message.includes('личным и корпоративным аккаунтами')) {
+        setExistingEmailAccounts(['individual', 'corporate']);
+        setEmailAccountNotice('Нельзя зарегистрировать аккаунт: этот e-mail уже занят и личным, и корпоративным профилем. Войдите в существующий аккаунт или восстановите пароль.');
+      }
       else setWarning(error.message);
     } finally {
       setSendingEmailCode(false);
@@ -552,7 +657,11 @@ function RegisterPage() {
     setVerifyingCode(true);
     setWarning('');
     try {
-      await sendAuthRequest('verify_email_code', { email: form.email, code }, csrfToken);
+      const result = await sendAuthRequest('verify_email_code', { email: form.email, code }, csrfToken);
+      if (Array.isArray(result.existing_accounts)) {
+        setExistingEmailAccounts(result.existing_accounts);
+        setEmailAccountNotice(registrationEmailWarning(result.existing_accounts));
+      }
       setEmailVerified(true);
       setEmailCodeSent(false);
       setIdentityStep('email-success');
@@ -727,9 +836,10 @@ function RegisterPage() {
                 requestEmailCode();
               }} required />
               {feedback.email && <p className="auth-form__feedback is-invalid">{feedback.email}</p>}
+              {emailAccountNotice && <p className={`register-email-warning${existingEmailAccounts.length > 1 ? ' is-error' : ''}`} role={existingEmailAccounts.length > 1 ? 'alert' : 'status'}>{emailAccountNotice}</p>}
               {emailInUse && <div className="register-email-taken" role="status"><p>Этот e-mail уже зарегистрирован.</p><a href="/">Войти</a><a href="/pages/forgot-password.html">Восстановить пароль</a></div>}
               <p className="register-enter-hint">Нажмите Enter, чтобы продолжить</p>
-              {form.email && <button className="register-step-next" type="button" onClick={requestEmailCode} disabled={sendingEmailCode}>{sendingEmailCode ? 'Отправляем…' : 'Далее'}</button>}
+              {form.email && <button className="register-step-next" type="button" onClick={requestEmailCode} disabled={sendingEmailCode || existingEmailAccounts.length > 1}>{sendingEmailCode ? 'Отправляем…' : 'Далее'}</button>}
             </div>
           </div>
           <div className={`register-identity__step register-identity__step--email-code${identityStep === 'email-code' ? ' is-active' : ''}`} aria-hidden={identityStep !== 'email-code'} inert={identityStep !== 'email-code'}>
@@ -737,6 +847,7 @@ function RegisterPage() {
             <div className="auth-form__field">
               <label htmlFor="email-code">Подтвердите почту</label>
               <p className="register-identity__email">{emailCodeSent ? localTestCode ? 'Локальный код для тестирования:' : `Мы отправили код на ${form.email}` : form.email}</p>
+              {emailAccountNotice && <p className={`register-email-warning${existingEmailAccounts.length > 1 ? ' is-error' : ''}`} role={existingEmailAccounts.length > 1 ? 'alert' : 'status'}>{emailAccountNotice}</p>}
               {localTestCode && <p className="register-identity__test-code">{localTestCode}</p>}
               <div className={`register-code${invalidEmailCode ? ' is-invalid' : ''}`} onClick={() => codeInputRef.current?.focus()}>
                 <div className="register-code__slots" aria-hidden="true">{Array.from({ length: 6 }, (_, index) => <span className={`${emailCode[index] ? 'is-filled' : ''}${index === Math.min(emailCode.length, 5) ? ' is-current' : ''}`} key={index}>{emailCode[index] || ''}</span>)}</div>
@@ -906,20 +1017,147 @@ function RegisterPage() {
 }
 
 function RecoveryPage() {
+  const { csrfToken, connectionError } = useCsrfToken();
+  const [token, setToken] = useState(() => {
+    const value = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
+    return /^[a-f0-9]{64}$/.test(value) ? value : '';
+  });
+  const [step, setStep] = useState(() => {
+    const value = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
+    return value ? (/^[a-f0-9]{64}$/.test(value) ? 'reset' : 'invalid') : 'request';
+  });
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
   const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [visiblePasswords, setVisiblePasswords] = useState(false);
+  const [passwordCopyStatus, setPasswordCopyStatus] = useState('');
+  const [isGeneratingPassword, setIsGeneratingPassword] = useState(false);
+
+  useEffect(() => {
+    if (step !== 'complete') return undefined;
+    const timer = window.setTimeout(() => window.location.replace('/'), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [step]);
+
+  useEffect(() => {
+    if (!window.location.hash) return;
+    window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
+  }, []);
+
+  async function requestReset(event) {
+    event.preventDefault();
+    if (!csrfToken || busy) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await sendAuthRequest('request_password_reset', { email }, csrfToken);
+      setStep('sent');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveNewPassword(event) {
+    event.preventDefault();
+    if (!csrfToken || busy) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await sendAuthRequest('reset_password', {
+        token,
+        password,
+        confirm_password: confirmation,
+      }, csrfToken);
+      setToken('');
+      setPassword('');
+      setConfirmation('');
+      setStep('complete');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateRecoveryPassword() {
+    setIsGeneratingPassword(true);
+    setPasswordCopyStatus('');
+    const generated = createSecurePassword();
+    setPassword(generated);
+    setConfirmation(generated);
+    try {
+      await window.navigator.clipboard.writeText(generated);
+      setPasswordCopyStatus('Пароль сгенерирован и скопирован. Сохраните его в надёжном месте.');
+    } catch {
+      setPasswordCopyStatus('Пароль сгенерирован. Сохраните его в надёжном месте.');
+    } finally {
+      setIsGeneratingPassword(false);
+    }
+  }
+
+  if (step === 'complete') {
+    return (
+      <AuthLayout success finale>
+        <div className="registration-finale is-welcome" aria-live="polite">
+          <div className="registration-finale__welcome">
+            <span className="registration-finale__celebration" aria-hidden="true">🔑</span>
+            <p className="registration-finale__eyebrow">ДОСТУП ВОССТАНОВЛЕН</p>
+            <h1>Ваш пароль успешно изменён!</h1>
+            <p className="registration-finale__description">Теперь войдите с новым паролем. Через 30 секунд мы автоматически вернём вас ко входу.</p>
+            <a className="registration-finale__button" href="/">
+              Вернуться ко входу
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+            </a>
+          </div>
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  const title = step === 'reset' ? 'Новый пароль'
+    : step === 'complete' ? 'Пароль изменён'
+      : step === 'sent' ? 'Проверьте почту' : 'Забыли пароль?';
+
   return (
     <AuthLayout>
-      <AuthHeader eyebrow="ВОССТАНОВЛЕНИЕ ДОСТУПА" title="Забыли пароль?">
-        Восстановление возможно, только если при регистрации вы указали e-mail.
+      <AuthHeader eyebrow="ВОССТАНОВЛЕНИЕ ДОСТУПА" title={title}>
+        {step === 'reset' && 'Придумайте новый пароль для личного аккаунта.'}
+        {step === 'sent' && 'Если личный аккаунт с таким адресом существует, на него отправлена ссылка для восстановления.'}
+        {step === 'invalid' && 'Ссылка восстановления повреждена. Запросите новую.'}
+        {step === 'request' && 'Укажите e-mail, который вы использовали при регистрации.'}
       </AuthHeader>
-      <form className="auth-form" onSubmit={(event) => { event.preventDefault(); setMessage('Восстановление пароля пока не подключено.'); }}>
+      {connectionError && <p className="auth-form__submit-warning" role="alert">{connectionError}</p>}
+      {step === 'request' && <form className="auth-form" onSubmit={requestReset}>
         <div className="auth-form__field">
           <label htmlFor="recovery-email">Электронная почта</label>
-          <input id="recovery-email" type="email" autoComplete="email" placeholder="name@example.com" required />
+          <input id="recovery-email" type="email" autoComplete="email" placeholder="name@example.com" maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} required />
         </div>
-        {message && <p className="auth-form__status" role="status">{message}</p>}
-        <button className="auth-form__submit" type="submit">Восстановить пароль</button>
-      </form>
+        {message && <p className="auth-form__submit-warning" role="alert">{message}</p>}
+        <button className="auth-form__submit" type="submit" disabled={!csrfToken || busy}>{busy ? 'Отправляем…' : 'Отправить ссылку'}</button>
+      </form>}
+      {step !== 'complete' && <a className="auth-form__forgot recovery-no-email" href="#" aria-disabled="true" title="Связь с поддержкой пока не настроена" onClick={(event) => event.preventDefault()}>Нет доступа к почте?</a>}
+      {step === 'reset' && <form className="auth-form" onSubmit={saveNewPassword}>
+        <div className="auth-form__field">
+          <PasswordField id="recovery-password" label="Новый пароль" value={password} onChange={(event) => setPassword(event.target.value)} visible={visiblePasswords} onToggle={() => setVisiblePasswords((current) => !current)} autoComplete="new-password" placeholder="Придумайте пароль" hint="От 8 символов: строчная и заглавная латинские буквы, цифра и символ." />
+        </div>
+        <button className="register-password-generate" type="button" onClick={generateRecoveryPassword} disabled={isGeneratingPassword}>
+          {isGeneratingPassword ? <span className="register-password-generate__loading" aria-hidden="true"><img src={keyIcon} alt="" /><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" /></svg></span> : <img src={keyIcon} alt="" aria-hidden="true" />}
+          <span>{isGeneratingPassword ? 'Генерируем пароль…' : 'Сгенерировать безопасный пароль'}</span>
+        </button>
+        {passwordCopyStatus && <p className="register-password-copy-status" role="status">{passwordCopyStatus}</p>}
+        {password && <div className="register-password-confirmation">
+          <PasswordField id="recovery-confirm-password" label="Повторите новый пароль" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} visible={visiblePasswords} onToggle={() => setVisiblePasswords((current) => !current)} autoComplete="new-password" placeholder="Повторите пароль" />
+        </div>}
+        {message && <p className="auth-form__submit-warning" role="alert">{message}</p>}
+        <button className="auth-form__submit" type="submit" disabled={!csrfToken || busy || !password || !confirmation}>{busy ? 'Сохраняем…' : 'Сохранить новый пароль'}</button>
+      </form>}
+      {step === 'sent' && <p className="auth-form__status" role="status">Проверьте папки «Входящие» и «Спам». Ссылка действует 30 минут.</p>}
+      {step === 'complete' && <p className="auth-form__status" role="status">Пароль успешно изменён.</p>}
+      {step === 'invalid' && <p className="auth-form__status" role="status">Откройте новую ссылку из письма или запросите восстановление ещё раз.</p>}
       <p className="auth-card__footer"><a href="/">Вернуться ко входу</a></p>
     </AuthLayout>
   );

@@ -9,7 +9,7 @@ use InvalidArgumentException;
 
 class EmailVerificationCode extends Mailable
 {
-    public function __construct(public readonly string $code)
+    public function __construct(public readonly string $code, public readonly string $recipientName = '')
     {
         if (!preg_match('/^[0-9]{6}$/D', $code)) {
             throw new InvalidArgumentException('Verification codes must contain exactly six digits.');
@@ -26,7 +26,10 @@ class EmailVerificationCode extends Mailable
         return new Content(
             html: 'emails.verification-code-html',
             text: 'emails.verification-code',
-            with: ['logoPath' => base_path('logos/ToDo-Inn-logo-compact.png')],
+            with: [
+                'logoPath' => base_path('logos/ToDo-Inn-logo-compact.png'),
+                'recipientName' => $this->recipientName,
+            ],
         );
     }
 }

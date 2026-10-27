@@ -17,6 +17,7 @@ class CorporateAccountInvitation extends Mailable
         public readonly string $organizationName,
         public readonly string $role,
         public readonly string $invitationUrl,
+        public readonly string $recipientName = '',
     ) {}
 
     public function envelope(): Envelope
@@ -31,6 +32,7 @@ class CorporateAccountInvitation extends Mailable
             text: 'emails.corporate-account-invitation-text',
             with: [
                 'organizationLabel' => $this->organizationType.' «'.$this->organizationName.'»',
+                'recipientName' => $this->recipientName,
                 'logoPath' => base_path('logos/ToDo-Inn-logo-compact.png'),
             ],
         );

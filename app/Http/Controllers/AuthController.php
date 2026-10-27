@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Mail\CorporateAccountInvitation;
+use App\Mail\PasswordResetLink;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -58,6 +59,10 @@ class AuthController
         return match ($action) {
             'send_verification_code' => $this->sendVerificationCode($request, $input),
             'verify_email_code' => $this->verifyEmailCode($request, $input),
+            'check_registration_email' => $this->checkRegistrationEmail($input),
+            'check_login_email' => $this->checkLoginEmail($input),
+            'request_password_reset' => $this->requestPasswordReset($input),
+            'reset_password' => $this->resetPassword($input),
             'accept_corporate_invitation' => $this->acceptCorporateInvitation($input),
             'validate_corporate_admin_identifier' => $this->validateCorporateAdminIdentifier($input),
             'validate_registration_username' => $this->validateRegistrationUsername($input),
@@ -78,23 +83,64 @@ class AuthController
         }
 
         $email = strtolower(trim($email));
+        $request->session()->forget('registration_verified_email');
+        $cacheKey = 'email-verification-code:'.hash('sha256', $email);
+        $existingAccounts = $this->emailAccountTypes($email);
+        if (count($existingAccounts) > 1) {
+            Cache::forget($cacheKey);
+
+            return $this->error(409, 'Этот e-mail уже связан с личным и корпоративным аккаунтами. Войдите в нужный аккаунт или восстановите пароль.');
+        }
+
         $isLocal = app()->environment('local');
         $code = $isLocal ? '285868' : (string) random_int(100000, 999999);
-        $cacheKey = 'email-verification-code:'.hash('sha256', $email);
         $codeHash = hash_hmac('sha256', $code, (string) config('app.key'));
         $expiresAt = now()->addMinutes(10);
         try {
-            Cache::put($cacheKey, ['hash' => $codeHash, 'attempts' => 0, 'expires_at' => $expiresAt->timestamp], $expiresAt);
+            Cache::put($cacheKey, [
+                'hash' => $codeHash,
+                'attempts' => 0,
+                'expires_at' => $expiresAt->timestamp,
+                'existing_accounts' => $existingAccounts,
+            ], $expiresAt);
             if (!$isLocal) {
-                Mail::to($email)->send(new EmailVerificationCode($code));
+                $recipient = User::query()->whereRaw('LOWER(email) = ?', [$email])->first(['first_name', 'middle_name']);
+                Mail::to($email)->send(new EmailVerificationCode($code, $this->greetingName($recipient)));
             }
         } catch (\Throwable) {
             Cache::forget($cacheKey);
             return $this->error(503, 'Не удалось отправить письмо. Попробуйте позже.');
         }
-        $request->session()->forget('registration_verified_email');
+        $data = $isLocal ? ['sent' => true, 'test_code' => $code] : ['sent' => true];
+        if ($existingAccounts !== []) {
+            $data['existing_accounts'] = $existingAccounts;
+        }
 
-        return $this->success($isLocal ? ['sent' => true, 'test_code' => $code] : ['sent' => true]);
+        return $this->success($data);
+    }
+
+    private function checkRegistrationEmail(#[\SensitiveParameter] array $input): JsonResponse
+    {
+        $email = $input['email'] ?? null;
+        if (!is_string($email) || strlen(trim($email)) > 254
+            || filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
+            return $this->error(422, 'Проверьте формат e-mail.');
+        }
+
+        return $this->success(['existing_accounts' => $this->emailAccountTypes(strtolower(trim($email)))]);
+    }
+
+    private function checkLoginEmail(#[\SensitiveParameter] array $input): JsonResponse
+    {
+        $email = $input['email'] ?? null;
+        if (!is_string($email) || strlen(trim($email)) > 254
+            || filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
+            return $this->error(422, 'Проверьте формат e-mail.');
+        }
+
+        $accounts = $this->emailAccountTypes(strtolower(trim($email)));
+
+        return $this->success(['account_choices' => count($accounts) > 1 ? ['individual', 'corporate'] : []]);
     }
 
     private function verifyEmailCode(Request $request, #[\SensitiveParameter] array $input): JsonResponse
@@ -138,7 +184,127 @@ class AuthController
         Cache::forget($cacheKey);
         $request->session()->put('registration_verified_email', $email);
 
-        return $this->success(['verified' => true]);
+        $data = ['verified' => true];
+        $existingAccounts = $record['existing_accounts'] ?? [];
+        if (is_array($existingAccounts) && $existingAccounts !== []) {
+            $data['existing_accounts'] = $existingAccounts;
+        }
+
+        return $this->success($data);
+    }
+
+    private function requestPasswordReset(#[\SensitiveParameter] array $input): JsonResponse
+    {
+        $email = $input['email'] ?? null;
+        if (!is_string($email) || strlen(trim($email)) > 254
+            || filter_var(trim($email), FILTER_VALIDATE_EMAIL) === false) {
+            return $this->error(422, 'Проверьте формат e-mail.');
+        }
+
+        $email = strtolower(trim($email));
+        $user = User::query()
+            ->where('account_type', 'individual')
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->first();
+
+        if ($user !== null) {
+            $emailKey = 'password-reset-email:'.hash('sha256', $email);
+            $previousTokenHash = Cache::get($emailKey);
+            if (is_string($previousTokenHash)) {
+                Cache::forget('password-reset-token:'.$previousTokenHash);
+            }
+
+            $token = bin2hex(random_bytes(32));
+            $tokenHash = hash('sha256', $token);
+            $tokenKey = 'password-reset-token:'.$tokenHash;
+            Cache::put($tokenKey, [
+                'user_id' => (int) $user->id,
+                'email' => $email,
+            ], now()->addMinutes(30));
+            Cache::put($emailKey, $tokenHash, now()->addMinutes(30));
+
+            $url = rtrim((string) config('app.frontend_url'), '/').'/pages/forgot-password.html#token='.$token;
+            try {
+                Mail::to($email)->send(new PasswordResetLink($url, $this->greetingName($user)));
+            } catch (\Throwable $exception) {
+                Cache::forget($tokenKey);
+                Cache::forget($emailKey);
+                Log::warning('Password reset email could not be sent.', [
+                    'recipient_hash' => hash('sha256', $email),
+                    'exception' => $exception::class,
+                ]);
+            }
+        }
+
+        return $this->success(['sent' => true]);
+    }
+
+    private function resetPassword(#[\SensitiveParameter] array $input): JsonResponse
+    {
+        $token = $input['token'] ?? null;
+        $password = $input['password'] ?? null;
+        $confirmation = $input['confirm_password'] ?? null;
+        if (!is_string($token) || preg_match('/^[a-f0-9]{64}$/D', $token) !== 1
+            || !is_string($password) || !is_string($confirmation)) {
+            return $this->error(422, 'Ссылка недействительна или срок её действия истёк. Запросите новую.');
+        }
+
+        $validator = Validator::make([
+            'password' => $password,
+            'confirm_password' => $confirmation,
+        ], [
+            'password' => [
+                'bail', 'required', 'string', 'min:8', 'max:128',
+                'regex:/^[\x21-\x7E]+$/D', 'regex:/[a-z]/', 'regex:/[A-Z]/', 'regex:/[0-9]/', 'regex:/[^A-Za-z0-9]/',
+            ],
+            'confirm_password' => ['bail', 'required', 'string', 'same:password'],
+        ]);
+        if ($validator->fails()) {
+            return $this->error(422, 'Пароль должен содержать от 8 до 128 символов латиницей, включая строчную и заглавную буквы, цифру и специальный символ; пароли должны совпадать.');
+        }
+
+        $tokenHash = hash('sha256', $token);
+        $tokenKey = 'password-reset-token:'.$tokenHash;
+        $emailKey = null;
+        try {
+            $reset = Cache::lock('password-reset-lock:'.$tokenHash, 10)->block(5, function () use ($tokenKey, $tokenHash, $password, &$emailKey): bool {
+                $record = Cache::get($tokenKey);
+                if (!is_array($record) || !is_int($record['user_id'] ?? null) || !is_string($record['email'] ?? null)) {
+                    return false;
+                }
+
+                $updated = DB::transaction(function () use ($record, $password): bool {
+                    $user = User::query()->whereKey($record['user_id'])->lockForUpdate()->first();
+                    if ($user === null || $user->account_type !== 'individual'
+                        || !hash_equals(strtolower($user->email), $record['email'])) {
+                        return false;
+                    }
+
+                    $user->password_hash = Hash::make($password);
+                    $user->save();
+
+                    return true;
+                });
+
+                if ($updated) {
+                    $emailKey = 'password-reset-email:'.hash('sha256', $record['email']);
+                    Cache::forget($tokenKey);
+                    if (Cache::get($emailKey) === $tokenHash) {
+                        Cache::forget($emailKey);
+                    }
+                }
+
+                return $updated;
+            });
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException) {
+            $reset = false;
+        }
+
+        if (!$reset) {
+            return $this->error(422, 'Ссылка недействительна или срок её действия истёк. Запросите новую.');
+        }
+
+        return $this->success(['reset' => true]);
     }
 
     private function register(Request $request, #[\SensitiveParameter] array $input): JsonResponse
@@ -416,11 +582,13 @@ class AuthController
         foreach ($sentInvitations as $invitation) {
             $invitationUrl = rtrim((string) config('app.frontend_url'), '/').'/pages/corporate-invitation.html?token='.$invitation['token'];
             try {
+                $recipient = User::query()->whereRaw('LOWER(email) = ?', [$invitation['email']])->first(['first_name', 'middle_name']);
                 Mail::to($invitation['email'])->send(new CorporateAccountInvitation(
                     $data['organization_type'],
                     $data['organization_name'],
                     $invitation['role'],
                     $invitationUrl,
+                    $this->greetingName($recipient),
                 ));
             } catch (\Throwable $exception) {
                 Log::warning('Corporate account invitation email could not be sent.', [
@@ -583,16 +751,32 @@ class AuthController
         }
 
         $email = strtolower(trim($email));
-        if ($accountType === 'individual'
-            && User::query()->whereRaw('LOWER(email) = ?', [$email])->exists()) {
-            return $this->error(409, 'Этот e-mail уже привязан к личному аккаунту.');
-        }
-        if ($accountType === 'corporate'
-            && DB::table('corporate_accounts')->whereRaw('LOWER(root_email) = ?', [$email])->exists()) {
+        $existingAccounts = $this->emailAccountTypes($email);
+        if (in_array($accountType, $existingAccounts, true)) {
+            if ($accountType === 'individual') {
+                return $this->error(409, 'Этот e-mail уже привязан к личному аккаунту.');
+            }
             return $this->error(409, 'Эта почта уже привязана к аккаунту организации.');
         }
 
         return $this->success(['available' => true]);
+    }
+
+    private function emailAccountTypes(string $email): array
+    {
+        $types = [];
+        $userType = User::query()->whereRaw('LOWER(email) = ?', [$email])->value('account_type');
+        if (is_string($userType)) {
+            $types[] = $userType === 'individual' ? 'individual' : 'corporate';
+        }
+        if (DB::table('corporate_accounts')->whereRaw('LOWER(root_email) = ?', [$email])->exists()) {
+            $types[] = 'corporate';
+        }
+
+        $types = array_values(array_unique($types));
+        usort($types, static fn (string $left, string $right): int => ($left === 'individual' ? 0 : 1) <=> ($right === 'individual' ? 0 : 1));
+
+        return $types;
     }
 
     private function login(Request $request, #[\SensitiveParameter] array $input): JsonResponse
@@ -602,6 +786,80 @@ class AuthController
         // Preserve legacy login semantics, including significant whitespace; the JSON body is bounded to 8 KiB.
         if (!is_string($username) || !is_string($password) || $username === '' || $password === '') {
             return $this->error(422, 'Введите логин и пароль.');
+        }
+
+        $accountType = $input['account_type'] ?? null;
+        if ($accountType !== null && !in_array($accountType, ['individual', 'corporate'], true)) {
+            return $this->error(422, 'Выберите тип аккаунта.');
+        }
+
+        if (filter_var($username, FILTER_VALIDATE_EMAIL) !== false) {
+            $email = strtolower($username);
+            $personalUser = User::query()->where('account_type', 'individual')
+                ->whereRaw('LOWER(email) = ?', [$email])->first();
+            $corporateAccount = DB::table('corporate_accounts')->whereRaw('LOWER(root_email) = ?', [$email])->first();
+            $legacyCorporateUser = User::query()->where('account_type', '<>', 'individual')
+                ->whereRaw('LOWER(email) = ?', [$email])->first();
+            $hasCorporate = $corporateAccount !== null || $legacyCorporateUser !== null;
+
+            if ($accountType === null && $personalUser !== null && $hasCorporate) {
+                $personalPasswordValid = Hash::check($password, $personalUser->getAuthPassword());
+                $corporatePasswordValid = ($corporateAccount !== null && is_string($corporateAccount->root_password_hash)
+                    && Hash::check($password, $corporateAccount->root_password_hash))
+                    || ($legacyCorporateUser !== null && Hash::check($password, $legacyCorporateUser->getAuthPassword()));
+                if (!$personalPasswordValid && !$corporatePasswordValid) {
+                    return $this->error(401, 'Неверный логин или пароль.');
+                }
+
+                return $this->success(['account_choices' => ['individual', 'corporate']]);
+            }
+
+            if ($accountType === 'individual' || ($accountType === null && !$hasCorporate)) {
+                if ($personalUser === null || !Hash::check($password, $personalUser->getAuthPassword())) {
+                    return $this->error(401, 'Неверный логин или пароль.');
+                }
+
+                Auth::login($personalUser);
+                $request->session()->forget('corporate_root_account_id');
+                $request->session()->regenerateToken();
+
+                return $this->success(['user' => $this->publicUser($personalUser), 'corporate_account' => null]);
+            }
+
+            if ($accountType === 'corporate' || ($accountType === null && $hasCorporate)) {
+                if ($corporateAccount !== null && is_string($corporateAccount->root_password_hash)
+                    && Hash::check($password, $corporateAccount->root_password_hash)) {
+                    Auth::logout();
+                    $request->session()->put('corporate_root_account_id', (int) $corporateAccount->id);
+                    $request->session()->regenerate();
+                    $request->session()->regenerateToken();
+
+                    return $this->success([
+                        'user' => null,
+                        'corporate_account' => [
+                            'id' => (int) $corporateAccount->id,
+                            'username' => $corporateAccount->root_username,
+                            'name' => $corporateAccount->organization_name,
+                        ],
+                    ]);
+                }
+
+                if ($legacyCorporateUser !== null && Hash::check($password, $legacyCorporateUser->getAuthPassword())) {
+                    Auth::login($legacyCorporateUser);
+                    $request->session()->forget('corporate_root_account_id');
+                    $request->session()->regenerateToken();
+
+                    return $this->success(['user' => $this->publicUser($legacyCorporateUser), 'corporate_account' => null]);
+                }
+
+                return $this->error(401, 'Неверный логин или пароль.');
+            }
+
+            return $this->error(401, 'Неверный логин или пароль.');
+        }
+
+        if ($accountType !== null) {
+            return $this->error(422, 'Выбор аккаунта доступен при входе по e-mail.');
         }
 
         if (Auth::attempt(['username' => $username, 'password' => $password])) {
@@ -650,6 +908,18 @@ class AuthController
             'username' => $user->username,
             'account_type' => $user->account_type,
         ];
+    }
+
+    private function greetingName(?object $user): string
+    {
+        if ($user === null) {
+            return '';
+        }
+
+        return trim(implode(' ', array_filter([
+            is_string($user->first_name ?? null) ? trim($user->first_name) : '',
+            is_string($user->middle_name ?? null) ? trim($user->middle_name) : '',
+        ], static fn (string $part): bool => $part !== '')));
     }
 
     private function success(array $data, int $status = 200): JsonResponse

@@ -7,7 +7,7 @@
     ];
     $displayRole = $roleNames[$role] ?? $role;
 @endphp
-To Do Inn! — приглашение в команду
+Здравствуйте{{ $recipientName !== '' ? ' '.$recipientName : '' }}!
 
 Вас пригласили в корпоративный аккаунт {{ $organizationLabel }}.
 Ваша роль: {{ $displayRole }}.

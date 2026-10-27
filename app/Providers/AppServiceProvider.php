@@ -30,6 +30,24 @@ class AppServiceProvider extends ServiceProvider
                 $limits[] = Limit::perMinute(5)->by('login-user-ip:'.hash('sha256', $username).'|'.$ip);
             }
 
+            if ($action === 'check_registration_email') {
+                $email = $request->json('email');
+                $email = is_string($email) ? strtolower(trim($email)) : '';
+                $limits[] = Limit::perMinute(30)->by('check-registration-email-ip:'.$ip);
+                if ($email !== '') {
+                    $limits[] = Limit::perHour(10)->by('check-registration-email-address:'.hash('sha256', $email));
+                }
+            }
+
+            if ($action === 'check_login_email') {
+                $email = $request->json('email');
+                $email = is_string($email) ? strtolower(trim($email)) : '';
+                $limits[] = Limit::perMinute(20)->by('check-login-email-ip:'.$ip);
+                if ($email !== '') {
+                    $limits[] = Limit::perHour(10)->by('check-login-email-address:'.hash('sha256', $email));
+                }
+            }
+
             if ($action === 'register') {
                 $limits[] = Limit::perHour(5)->by('register-hour:'.$ip);
                 $limits[] = Limit::perDay(20)->by('register-day:'.$ip);
@@ -55,6 +73,26 @@ class AppServiceProvider extends ServiceProvider
                 $limits[] = Limit::perMinute(10)->by('verify-email-code-ip:'.$ip);
                 if ($email !== '') {
                     $limits[] = Limit::perHour(10)->by('verify-email-code-address:'.hash('sha256', $email));
+                }
+            }
+
+            if ($action === 'request_password_reset') {
+                $email = $request->json('email');
+                $email = is_string($email) ? strtolower(trim($email)) : '';
+                $limits[] = Limit::perHour(10)->by('password-reset-ip:'.$ip);
+                if ($email !== '') {
+                    $emailHash = hash('sha256', $email);
+                    $limits[] = Limit::perMinute(1)->by('password-reset-cooldown:'.$emailHash);
+                    $limits[] = Limit::perHour(5)->by('password-reset-address:'.$emailHash);
+                }
+            }
+
+            if ($action === 'reset_password') {
+                $token = $request->json('token');
+                $tokenHash = is_string($token) ? hash('sha256', $token) : '';
+                $limits[] = Limit::perMinute(10)->by('password-reset-submit-ip:'.$ip);
+                if ($tokenHash !== '') {
+                    $limits[] = Limit::perHour(10)->by('password-reset-submit-token:'.$tokenHash);
                 }
             }
 

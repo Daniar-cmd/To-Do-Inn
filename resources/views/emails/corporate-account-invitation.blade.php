@@ -28,7 +28,8 @@
                     <tr>
                         <td style="padding:34px 34px 12px;">
                             <p style="margin:0 0 10px;color:#3973b2;font-size:12px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;">Приглашение в команду</p>
-                            <h1 style="margin:0;color:#172b49;font-size:25px;line-height:1.25;">Вас пригласили в рабочее пространство</h1>
+                            <h1 style="margin:0;color:#172b49;font-size:25px;line-height:1.25;">Здравствуйте{{ $recipientName !== '' ? ' '.$recipientName : '' }}!</h1>
+                            <p style="margin:12px 0 0;color:#52647c;font-size:15px;line-height:1.7;">Вас пригласили в рабочее пространство</p>
                             <p style="margin:18px 0 0;color:#52647c;font-size:15px;line-height:1.7;">Вы приглашены в корпоративный аккаунт</p>
                             <div style="margin-top:8px;padding:15px 17px;border:1px solid #dce7f5;border-radius:12px;background-color:#f5f8fd;color:#18395f;font-size:18px;font-weight:700;line-height:1.45;">{{ $organizationLabel }}</div>
                             <p style="margin:16px 0 0;color:#52647c;font-size:14px;line-height:1.6;">Ваша роль: <strong style="color:#263c5a;">{{ $displayRole }}</strong></p>

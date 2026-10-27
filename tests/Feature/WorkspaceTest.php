@@ -121,6 +121,16 @@ class WorkspaceTest extends DatabaseTestCase
         ]);
         Mail::assertSent(\App\Mail\CorporateAccountInvitation::class, fn ($mail): bool => $mail->hasTo('new-member@example.com'));
 
+        $this->other->forceFill([
+            'email' => 'known-member@example.com',
+            'first_name' => 'Данияр',
+            'middle_name' => 'Рафаилевич',
+        ])->save();
+        $this->postWorkspace(['action' => 'invite_member', 'corporate_account_id' => $accountId,
+            'identifier' => 'known-member@example.com', 'role' => 'manager'])->assertCreated();
+        Mail::assertSent(\App\Mail\CorporateAccountInvitation::class, fn ($mail): bool => $mail->hasTo('known-member@example.com')
+            && $mail->recipientName === 'Данияр Рафаилевич');
+
         Auth::login($this->other);
         $this->postWorkspace(['action' => 'invite_member', 'corporate_account_id' => $accountId,
             'identifier' => 'blocked@example.com', 'role' => 'support'])->assertForbidden();

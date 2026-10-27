@@ -14,11 +14,13 @@ class CorporateAccountInvitationMailTest extends TestCase
             'Яблоко',
             'manager',
             'https://example.test/pages/corporate-invitation.html?token=test-token',
+            'Данияр Рафаилевич',
         );
 
         $mail->assertHasSubject('Приглашение в корпоративный аккаунт — To Do Inn!')
             ->assertSeeInHtml('ООО «Яблоко»')
             ->assertSeeInHtml('Менеджер')
+            ->assertSeeInHtml('Здравствуйте Данияр Рафаилевич!')
             ->assertSeeInHtml('Принять приглашение')
             ->assertSeeInText('ООО «Яблоко»')
             ->assertSeeInText('7 дней');

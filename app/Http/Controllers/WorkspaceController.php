@@ -352,9 +352,14 @@ class WorkspaceController
         $account = DB::table('corporate_accounts')->where('id', $corporateAccountId)->first(['organization_type', 'organization_name']);
         $accountName = (string) ($account->organization_name ?? '');
         $invitationUrl = rtrim((string) config('app.frontend_url'), '/').'/pages/corporate-invitation.html?token='.$token;
+        $invitee = DB::table('users')->whereRaw('LOWER(email) = ?', [$email])->first(['first_name', 'middle_name']);
+        $recipientName = trim(implode(' ', array_filter([
+            is_string($invitee->first_name ?? null) ? trim($invitee->first_name) : '',
+            is_string($invitee->middle_name ?? null) ? trim($invitee->middle_name) : '',
+        ], static fn (string $part): bool => $part !== '')));
         $sent = true;
         try {
-            Mail::to($email)->send(new CorporateAccountInvitation((string) ($account->organization_type ?? ''), $accountName, $role, $invitationUrl));
+            Mail::to($email)->send(new CorporateAccountInvitation((string) ($account->organization_type ?? ''), $accountName, $role, $invitationUrl, $recipientName));
         } catch (\Throwable $exception) {
             Log::warning('Corporate account invitation email could not be sent.', [
                 'recipient_hash' => hash('sha256', $email),
