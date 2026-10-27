@@ -606,7 +606,7 @@ class AuthController
                         'message' => 'Добро пожаловать в ToDo-inn! Здесь вы можете организовать свои дела или работу предприятия. Надеемся, мы сработаемся!',
                     ]);
 
-                    return ['corporate_account_id' => $accountId, 'user' => null, 'upgraded' => $upgradedWorkspaceUser !== null];
+                    return ['corporate_account_id' => $accountId, 'user' => $upgradedWorkspaceUser, 'upgraded' => $upgradedWorkspaceUser !== null];
                 }
 
                 $user = User::create([
@@ -697,11 +697,8 @@ class AuthController
         }
 
         // The session guard rotates the session ID; also explicitly replace the pre-login CSRF token.
-        if (($result['upgraded'] ?? false) && $result['corporate_account_id'] !== null) {
-            Auth::logout();
-            $request->session()->put('corporate_root_account_id', (int) $result['corporate_account_id']);
-            $request->session()->regenerate();
-        } elseif ($user instanceof User) {
+        if ($user instanceof User) {
+            $request->session()->forget('corporate_root_account_id');
             Auth::login($user);
         }
         $request->session()->forget('registration_verified_email');

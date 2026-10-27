@@ -757,12 +757,9 @@ function RegisterPage() {
         marketing_consent: form.marketingConsent,
       }, csrfToken);
       navigationApprovedRef.current = true;
-      if (result.upgraded) {
-        window.location.assign(result.corporate_account ? '/pages/organization-root.html' : '/pages/workspace.html');
-        return;
-      }
       const successParams = new URLSearchParams();
-      if (result.corporate_account) successParams.set('corporate', 'created');
+      if (result.corporate_account && !result.upgraded) successParams.set('corporate', 'created');
+      if (result.upgraded) successParams.set('upgraded', '1');
       if (result.invitation_delivery_failures?.length) successParams.set('invitations', 'failed');
       try {
         window.sessionStorage.setItem('todo-inn-registration-welcome', JSON.stringify({
@@ -1209,6 +1206,7 @@ function CorporateInvitationPage() {
 
 function RegistrationSuccessPage() {
   const corporateCreated = new URLSearchParams(window.location.search).get('corporate') === 'created';
+  const accountUpgraded = new URLSearchParams(window.location.search).get('upgraded') === '1';
   const invitationsFailed = new URLSearchParams(window.location.search).get('invitations') === 'failed';
   const [welcome] = useState(() => {
     try {
@@ -1260,9 +1258,11 @@ function RegistrationSuccessPage() {
         ) : (
           <div className="registration-finale__welcome">
             <span className="registration-finale__celebration" aria-hidden="true">{corporateCreated ? '🎉' : '✨'}</span>
-            <p className="registration-finale__eyebrow">Регистрация успешно завершена</p>
-            <h1>{corporateCreated ? 'Всё готово!' : `Добро пожаловать${welcome ? `, ${welcome}` : ''}!`}</h1>
-            <p className="registration-finale__description">{corporateCreated
+            <p className="registration-finale__eyebrow">{accountUpgraded ? 'АККАУНТ УСПЕШНО ОБНОВЛЁН' : 'Регистрация успешно завершена'}</p>
+            <h1>{accountUpgraded ? 'Готово, данные обновлены!' : corporateCreated ? 'Всё готово!' : `Добро пожаловать${welcome ? `, ${welcome}` : ''}!`}</h1>
+            <p className="registration-finale__description">{accountUpgraded
+              ? 'Ваше рабочее пространство готово. Доски, списки и задачи сохранены.'
+              : corporateCreated
               ? 'Организация создана. Владелец получит приглашение для первого входа в рабочее пространство.'
               : 'Ваше рабочее пространство уже ждёт. Можно переходить к планам и задачам.'}</p>
             {invitationsFailed && <p className="registration-finale__notice" role="alert">Аккаунт создан, но часть приглашений не отправилась. Проверьте почту или адреса приглашённых.</p>}

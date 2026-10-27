@@ -185,11 +185,14 @@ class AuthTest extends DatabaseTestCase
         $this->assertDatabaseHas('task_lists', ['id' => $listId, 'user_id' => $user->id, 'board_id' => $board->id]);
         $this->assertDatabaseHas('tasks', ['id' => $taskId, 'user_id' => $user->id, 'list_id' => $listId, 'title' => 'Не трогать задачу']);
         $this->assertDatabaseHas('notifications', ['corporate_account_id' => $accountId, 'sender' => 'ToDo-Inn!']);
-        $this->getAuth()->assertJsonPath('data.user', null)->assertJsonPath('data.corporate_account.id', $accountId);
+        $this->getAuth()->assertJsonPath('data.user.id', $user->id)->assertJsonPath('data.corporate_account', null);
+        $this->postAuth(['action' => 'legacy_account_status'])->assertOk()->assertJsonPath('data.required', false);
 
         $this->postAuth(['action' => 'logout'])->assertOk();
         $this->postAuth(['action' => 'login', 'username' => $user->email, 'password' => 'NewCompany123!'])
             ->assertOk()->assertJsonPath('data.account_choices', ['individual', 'corporate']);
+        $this->postAuth(['action' => 'login', 'username' => '@NewCompany', 'password' => 'NewCompany123!'])
+            ->assertOk()->assertJsonPath('data.corporate_account.id', $accountId);
     }
 
     public function test_legacy_corporate_account_can_switch_to_individual_without_losing_boards(): void
