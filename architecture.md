@@ -8,7 +8,8 @@
 frontend/                    Исходники интерфейса; Vite root
   index.html                 / (вход)
   pages/*.html               /pages/register.html, forgot-password.html,
-                             registration-success.html, workspace.html
+                              registration-success.html, workspace.html,
+                              corporate-invitation.html, organization-root.html
   js/main.jsx                React entry point
   js/App.jsx                 Выбор страницы по URL
   js/api.js                  Fetch, JSON-контракт и CSRF
@@ -49,7 +50,7 @@ vite.config.mjs, gulpfile.js  Конфигурации сборки
 2. `/api/*` Vite проксирует на Laravel `127.0.0.1:8001`. `/favicon.svg` проксируется туда же, поскольку файл остаётся в PHP web-root. Ни браузер, ни Vite не должны обращаться к старому PHP-серверу на `8000` в обычном режиме.
 3. `server.php` при `npm run dev:api` направляет любые `/api/*` в `public/index.php` даже при существовании физических `public/api/*.php`. Laravel-маршруты в `routes/web.php` обрабатывают прежние `/api/auth.php`, `/api/profile.php`, `/api/workspace.php`; профиль и workspace требуют Laravel-сессию.
 4. Изменяющие запросы передают токен из GET `/api/auth.php` заголовком `X-CSRF-TOKEN`. Начальные параллельные вызовы `getSession()` используют один незавершённый запрос, чтобы не смешать токен с cookie другой сессии; после завершения ответ не кешируется. Все ответы API — JSON с `success` и `data` либо `error`.
-5. Данные хранятся в PostgreSQL. Laravel использует Eloquent/Query Builder; legacy PHP использует PDO. Схема и API-поведение не меняются от перестановки папок.
+5. Данные хранятся в PostgreSQL. Laravel использует Eloquent/Query Builder; legacy PHP использует PDO. Организация/root-аккаунт хранится отдельно в `corporate_accounts`, личные пользователи — в `users`, а приглашения и принятые роли — в `corporate_account_members`. Дополнительные сведения профиля, предпочтительная тема и версии сохранённых согласий привязаны к соответствующему пользователю или организации. Root входит отдельно; корпоративные доски доступны участникам через личный вход, а управлять досками и приглашениями может только owner. Роли `admin`, `manager`, `support` пока не дают дополнительных ограничений на обычные действия в досках. Схема и API-поведение не меняются от перестановки папок.
 
 ## Окружения и данные
 

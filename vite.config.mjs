@@ -30,6 +30,8 @@ export default defineConfig({
         register: resolve(frontendRoot, 'pages/register.html'),
         recovery: resolve(frontendRoot, 'pages/forgot-password.html'),
         registrationSuccess: resolve(frontendRoot, 'pages/registration-success.html'),
+        corporateInvitation: resolve(frontendRoot, 'pages/corporate-invitation.html'),
+        organizationRoot: resolve(frontendRoot, 'pages/organization-root.html'),
         workspace: resolve(frontendRoot, 'pages/workspace.html'),
       },
     },

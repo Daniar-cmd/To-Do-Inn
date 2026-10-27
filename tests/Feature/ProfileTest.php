@@ -39,6 +39,9 @@ class ProfileTest extends DatabaseTestCase
                 'secondary_email' => null,
                 'account_type' => 'individual',
                 'about' => '',
+                'github_url' => null,
+                'telegram_url' => null,
+                'preferred_theme' => 'system',
                 'username_changed_at' => null,
                 'username_change_available_at' => null,
                 'avatar' => null,
@@ -80,9 +83,14 @@ class ProfileTest extends DatabaseTestCase
             'username' => ' '.$this->user->username.' ',
             'email' => ' Person@Example.COM ', 'secondary_email' => ' Backup@Example.COM ',
             'about' => ' Привет 👋 ', 'account_type' => 'corporate',
+            'github_url' => 'https://github.com/profile-user', 'preferred_theme' => 'dark',
+            'telegram_url' => 'https://t.me/profile_user',
         ])->assertOk()->assertJsonPath('data.profile.email', 'person@example.com')
             ->assertJsonPath('data.profile.secondary_email', 'backup@example.com')
             ->assertJsonPath('data.profile.about', 'Привет 👋')
+            ->assertJsonPath('data.profile.github_url', 'https://github.com/profile-user')
+            ->assertJsonPath('data.profile.telegram_url', 'https://t.me/profile_user')
+            ->assertJsonPath('data.profile.preferred_theme', 'dark')
             ->assertJsonPath('data.profile.account_type', 'corporate')
             ->assertJsonPath('data.profile.username_changed_at', null);
 
@@ -117,10 +125,12 @@ class ProfileTest extends DatabaseTestCase
     {
         return [
             'short username' => [['username' => 'ab']],
+            'three-character username' => [['username' => 'abc']],
             'long username' => [['username' => str_repeat('a', 25)]],
             'username type' => [['username' => ['Name']]],
             'username null' => [['username' => null]],
             'unicode username' => [['username' => 'Новый']],
+            'numeric username' => [['username' => '12345']],
             'email type' => [['email' => ['person@example.com']]],
             'bad email' => [['email' => 'not-an-email']],
             'long email' => [['email' => str_repeat('a', 250).'@example.com']],
@@ -130,6 +140,9 @@ class ProfileTest extends DatabaseTestCase
             'about type' => [['about' => ['text']]],
             'about character limit' => [['about' => str_repeat('я', 1201)]],
             'about limit before trimming' => [['about' => ' '.str_repeat('a', 1200)]],
+            'invalid GitHub URL' => [['github_url' => 'javascript:alert(1)']],
+            'invalid Telegram URL' => [['telegram_url' => 'https://t.me/a']],
+            'invalid preferred theme' => [['preferred_theme' => 'auto']],
             'invalid account type' => [['account_type' => 'admin']],
             'empty account type' => [['account_type' => '']],
             'null account type' => [['account_type' => null]],

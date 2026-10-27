@@ -10,7 +10,10 @@ use Illuminate\Support\Facades\Route;
 
 // The preview router sends this URL to Laravel; the main legacy server still runs its PHP file.
 // Unsupported methods are explicitly rejected by PrepareAuthRequest before the CSRF check.
-Route::any('/api/auth.php', AuthController::class)->middleware('throttle:legacy-auth');
+$authRoute = Route::any('/api/auth.php', AuthController::class);
+if (! app()->environment('local')) {
+    $authRoute->middleware('throttle:legacy-auth');
+}
 
 Route::match(['GET', 'POST', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TRACE', 'CONNECT'], '/api/profile.php', ProfileController::class)
     // PrepareProfileRequest invokes the same CSRF middleware after auth/method checks, before reading JSON.

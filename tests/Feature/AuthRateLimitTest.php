@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use Tests\DatabaseTestCase;
 
@@ -71,6 +72,19 @@ class AuthRateLimitTest extends DatabaseTestCase
         $this->invalidRegistration()->assertUnprocessable();
     }
 
+    public function test_verification_email_resend_waits_a_minute(): void
+    {
+        Mail::fake();
+        $email = 'code-'.bin2hex(random_bytes(5)).'@example.com';
+
+        $this->sendVerificationCode($email)->assertOk();
+        $this->sendVerificationCode($email)->assertStatus(429)->assertHeader('Retry-After');
+
+        $this->travel(60)->seconds();
+        $this->sendVerificationCode($email)->assertOk();
+        Mail::assertSentTimes(\App\Mail\EmailVerificationCode::class, 2);
+    }
+
     public function test_hourly_resets_do_not_bypass_the_daily_registration_limit(): void
     {
         for ($hour = 0; $hour < 4; $hour++) {
@@ -118,5 +132,12 @@ class AuthRateLimitTest extends DatabaseTestCase
         return $this->postJson('/api/auth.php', ['action' => 'register', 'username' => '!'], [
             'X-CSRF-TOKEN' => $this->app['session.store']->token(),
         ]);
+    }
+
+    private function sendVerificationCode(string $email): TestResponse
+    {
+        return $this->postJson('/api/auth.php', [
+            'action' => 'send_verification_code', 'email' => $email,
+        ], ['X-CSRF-TOKEN' => $this->app['session.store']->token()]);
     }
 }

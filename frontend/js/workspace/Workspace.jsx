@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
+import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
 
 const accountTypeLabels = {
   individual: 'Индивидуальный аккаунт',
@@ -36,11 +37,7 @@ function PlusIcon() {
 }
 
 function SettingsIcon() {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z"/><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z"/></svg>;
-}
-
-function SlidersIcon() {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h7m4 0h5M4 12h3m4 0h9M4 18h9m4 0h3"/><circle cx="13" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="18" r="2"/></svg>;
+  return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.31.06-.62.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.28 7.28 0 0 0-1.63-.94l-.36-2.54A.49.49 0 0 0 13.89 2h-3.78a.49.49 0 0 0-.49.42l-.36 2.54c-.59.23-1.13.55-1.63.94l-2.39-.96a.5.5 0 0 0-.61.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96c.5.39 1.04.71 1.63.94l.36 2.54a.49.49 0 0 0 .49.42h3.78a.49.49 0 0 0 .49-.42l.36-2.54c.59-.23 1.13-.55 1.63-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" /></svg>;
 }
 
 function BoardTypeIcon({ type }) {
@@ -109,7 +106,7 @@ function ListTask({ task, csrfToken, onToggle, onChange, onReorder, animating, d
   </li>;
 }
 
-function ListCard({ list, tasks, flags, csrfToken, onChange }) {
+function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
   const [taskName, setTaskName] = useState('');
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -121,6 +118,7 @@ function ListCard({ list, tasks, flags, csrfToken, onChange }) {
   const [cardTheme, setCardTheme] = useState(list.theme);
   const [flagId, setFlagId] = useState(list.flag?.id || '');
   const [newFlagName, setNewFlagName] = useState('');
+  const [creatingFlag, setCreatingFlag] = useState(false);
   const [important, setImportant] = useState(list.is_important);
   const [showDone, setShowDone] = useState(false);
   const [error, setError] = useState('');
@@ -204,6 +202,26 @@ function ListCard({ list, tasks, flags, csrfToken, onChange }) {
     } catch (err) { setError(err.message); }
   }
 
+  async function createFlag(event) {
+    event.preventDefault();
+    const trimmedName = newFlagName.trim();
+    if (!trimmedName) return;
+    const details = event.currentTarget.closest('details');
+    setCreatingFlag(true);
+    setError('');
+    try {
+      const { flag } = await updateWorkspace({ action: 'create_flag', board_id: list.board_id, name: trimmedName }, csrfToken);
+      onFlagCreated(flag);
+      setFlagId(flag.id);
+      setNewFlagName('');
+      details.open = false;
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreatingFlag(false);
+    }
+  }
+
   async function handleDeleteList() {
     setDeleting(true);
     setError('');
@@ -223,6 +241,7 @@ function ListCard({ list, tasks, flags, csrfToken, onChange }) {
     <header className="task-list-card__header">
       <div className="task-list-card__created">
         {list.is_important && <svg className="task-list-card__important" aria-label="Важный список" role="img" viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.4l6.2-.9L12 2.8Z" /></svg>}
+        {list.flag && <span className={`task-list-card__flag-mark is-${list.flag.color}`} data-tooltip={list.flag.name} title={list.flag.name} aria-label={`Флаг: ${list.flag.name}`} role="img" tabIndex="0"><FlagIcon color={list.flag.color} /></span>}
         <time dateTime={list.created_at}>{formatListCreatedAt(list.created_at)}</time>
       </div>
       <div className="task-list-card__actions">
@@ -235,15 +254,19 @@ function ListCard({ list, tasks, flags, csrfToken, onChange }) {
       </div>
     </header>
     {editing ? <form onSubmit={saveDetails} className="task-list-card__edit">
-      <div className="task-list-card__edit-heading">Настройки списка</div>
       <label className="task-list-card__field"><span>Название</span><input className="task-list-card__title-input" aria-label="Название списка" maxLength="80" value={name} onChange={(event) => setName(event.target.value)} /></label>
       <label className="task-list-card__field"><span>Описание</span><textarea ref={descriptionRef} aria-label="Описание списка" maxLength="2000" value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-      <button className={`list-option-button task-list-card__important-toggle${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} onClick={() => setImportant((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill={important ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg><span>Важный список</span></button>
-      <fieldset className="task-list-card__theme-field"><legend>Цвет списка</legend><div className="list-theme-picker" role="group" aria-label="Цвет темы списка">{themes.map(([value, label]) => <button className={`list-theme-swatch${cardTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={cardTheme === value} key={value} onClick={() => setCardTheme(value)} />)}</div></fieldset>
-      <div className="task-list-card__field"><span>Флаг</span><details className="flag-picker task-list-card__flag-picker"><summary className="list-option-button" aria-label="Изменить флаг списка"><FlagIcon color={flags.find((item) => String(item.id) === String(flagId))?.color || 'blue'} /><span>{newFlagName ? 'Новый флаг' : flags.find((item) => String(item.id) === String(flagId))?.name || 'Без флага'}</span><svg className="task-list-card__flag-chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg></summary><div className="flag-picker__panel"><p className="flag-picker__title">Выберите флаг</p><button className={`flag-picker__choice${!flagId && !newFlagName ? ' is-selected' : ''}`} type="button" onClick={(event) => { setFlagId(''); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}>Без флага</button>{flags.map((flag) => <button className={`flag-picker__choice${String(flagId) === String(flag.id) && !newFlagName ? ' is-selected' : ''}`} type="button" key={flag.id} onClick={(event) => { setFlagId(flag.id); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><FlagIcon color={flag.color} /><span>{flag.name}</span></button>)}<label className="flag-picker__custom-label" htmlFor={`edit-flag-name-${list.id}`}>Или создайте новый</label><input className="flag-picker__custom-input" id={`edit-flag-name-${list.id}`} type="text" maxLength="40" placeholder="Название флага" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setFlagId(''); }} /></div></details></div>
+      <div className="task-list-card__edit-toolbar">
+        <button className={`list-option-button${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} aria-label={important ? 'Убрать важность списка' : 'Сделать список важным'} title="Важный список" onClick={() => setImportant((value) => !value)}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill={important ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
+        </button>
+        <div className="list-theme-picker" role="group" aria-label="Цвет темы списка">{themes.map(([value, label]) => <button className={`list-theme-swatch${cardTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={cardTheme === value} key={value} onClick={() => setCardTheme(value)} />)}</div>
+      </div>
+      <div className="task-list-card__field"><span>Флаг</span><details className="flag-picker task-list-card__flag-picker"><summary className="list-option-button" aria-label="Изменить флаг списка">{flagId && <FlagIcon color={flags.find((item) => String(item.id) === String(flagId))?.color || 'blue'} />}<span>{newFlagName ? 'Новый флаг' : flags.find((item) => String(item.id) === String(flagId))?.name || 'Без флага'}</span><svg className="task-list-card__flag-chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg></summary><div className="flag-picker__panel"><p className="flag-picker__title">Выберите флаг</p><button className={`flag-picker__choice${!flagId && !newFlagName ? ' is-selected' : ''}`} type="button" onClick={(event) => { setFlagId(''); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><span className="flag-picker__empty-icon" aria-hidden="true" />Без флага</button>{flags.map((flag) => <button className={`flag-picker__choice${String(flagId) === String(flag.id) && !newFlagName ? ' is-selected' : ''}`} type="button" key={flag.id} onClick={(event) => { setFlagId(flag.id); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><FlagIcon color={flag.color} /><span>{flag.name}</span></button>)}<label className="flag-picker__custom-label" htmlFor={`edit-flag-name-${list.id}`}>Или создайте новый</label><div className="flag-picker__create-row"><input className="flag-picker__custom-input" id={`edit-flag-name-${list.id}`} type="text" maxLength="40" placeholder="Название флага" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setFlagId(''); }} />{newFlagName.trim() && <button className="flag-picker__create-button" type="button" aria-label="Создать флаг" title="Создать флаг" disabled={creatingFlag} onClick={createFlag}><PlusIcon /></button>}</div></div></details></div>
+      {error && <p className="task-list-card__error" role="alert">{error}</p>}
       <div className="task-list-card__edit-actions"><button type="button" className="task-list-card__cancel" onClick={() => { setEditing(false); setName(list.name); setDescription(list.description || ''); setCardTheme(list.theme); setFlagId(list.flag?.id || ''); setNewFlagName(''); setImportant(list.is_important); }}>Отмена</button><button type="submit">Сохранить</button></div>
     </form> : <>
-      <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2>{list.flag && <span className={`task-list-card__flag is-${list.flag.color}`}><i aria-hidden="true" />{list.flag.name}</span>}</div>{description && <p className="task-list-card__description">{description}</p>}</div>
+      <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{description && <p className="task-list-card__description">{description}</p>}</div>
       <div className="task-list-card__section-label">ЗАДАЧИ</div>
       <ul className="task-list-card__tasks">{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>
       <form className="task-list-card__add" onSubmit={addTask}><input aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} onChange={(event) => setTaskName(event.target.value)} /><button type="submit" aria-label="Добавить задачу">Добавить</button></form>
@@ -263,13 +286,21 @@ function ListCard({ list, tasks, flags, csrfToken, onChange }) {
 }
 
 export function Workspace() {
-  const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('todo-inn-theme') || 'light'; } catch { return 'light'; }
+  const [registrationArrival, setRegistrationArrival] = useState(() => {
+    try { return window.sessionStorage.getItem('todo-inn-registration-arrival') === '1'; } catch { return false; }
   });
+  const [themePreference, setThemePreference] = useState(() => {
+    try { return localStorage.getItem('todo-inn-theme') || 'system'; } catch { return 'system'; }
+  });
+  const [systemTheme, setSystemTheme] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const theme = themePreference === 'system' ? systemTheme : themePreference;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [csrfToken, setCsrfToken] = useState('');
   const [account, setAccount] = useState(null);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState('');
+  const activeBoardId = useRef(null);
+  const workspaceRequestId = useRef(0);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState(null);
   const [profileError, setProfileError] = useState('');
@@ -277,6 +308,13 @@ export function Workspace() {
   const [avatarChanged, setAvatarChanged] = useState(false);
   const [board, setBoard] = useState(null);
   const [boards, setBoards] = useState([]);
+  const [corporateAccounts, setCorporateAccounts] = useState([]);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [inviteAccountId, setInviteAccountId] = useState('');
+  const [inviteIdentifier, setInviteIdentifier] = useState('');
+  const [inviteRole, setInviteRole] = useState('admin');
+  const [inviteMessage, setInviteMessage] = useState('');
+  const [inviting, setInviting] = useState(false);
   const [boardFormOpen, setBoardFormOpen] = useState(false);
   const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [editingBoardId, setEditingBoardId] = useState(null);
@@ -286,6 +324,7 @@ export function Workspace() {
   const [boardName, setBoardName] = useState('');
   const [boardDescription, setBoardDescription] = useState('');
   const [boardType, setBoardType] = useState('personal');
+  const [boardCorporateAccountId, setBoardCorporateAccountId] = useState('');
   const [boardFormError, setBoardFormError] = useState('');
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [flags, setFlags] = useState([]);
@@ -304,6 +343,7 @@ export function Workspace() {
   const [selectedFlagId, setSelectedFlagId] = useState(null);
   const [newFlagName, setNewFlagName] = useState('');
   const [flagPickerOpen, setFlagPickerOpen] = useState(false);
+  const [creatingFlag, setCreatingFlag] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -314,8 +354,34 @@ export function Workspace() {
   }, []);
 
   useEffect(() => {
-    try { localStorage.setItem('todo-inn-theme', theme); } catch { /* Theme remains active for this page. */ }
-  }, [theme]);
+    if (!registrationArrival) return undefined;
+    try { window.sessionStorage.removeItem('todo-inn-registration-arrival'); } catch { /* Transition is an enhancement only. */ }
+    const timer = window.setTimeout(() => setRegistrationArrival(false), 850);
+    return () => window.clearTimeout(timer);
+  }, [registrationArrival]);
+
+  useEffect(() => {
+    function closeOpenMenus(event) {
+      document.querySelectorAll('details[open]').forEach((details) => {
+        if (!details.contains(event.target)) details.open = false;
+      });
+    }
+    document.addEventListener('click', closeOpenMenus);
+    return () => document.removeEventListener('click', closeOpenMenus);
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('todo-inn-theme', themePreference); } catch { /* Theme remains active for this page. */ }
+  }, [themePreference]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return undefined;
+    const updateSystemTheme = (event) => setSystemTheme(event.matches ? 'dark' : 'light');
+    updateSystemTheme(media);
+    media.addEventListener?.('change', updateSystemTheme);
+    return () => media.removeEventListener?.('change', updateSystemTheme);
+  }, []);
 
   useEffect(() => {
     if (!mobileMenuOpen) return undefined;
@@ -332,21 +398,28 @@ export function Workspace() {
   }, [mobileMenuOpen]);
 
   useEffect(() => {
-    Promise.all([getSession(), getWorkspace()])
-      .then(([session, workspace]) => {
+    getSession()
+      .then(async (session) => {
         if (!session.user) {
           window.location.replace('/');
           return;
         }
-        setAccount(session.user);
+
+        // The auth session intentionally contains only public identity fields; load the full
+        // profile here so a persisted avatar appears in the header after page reloads.
+        const [profileData, workspace] = await Promise.all([getProfile(), getWorkspace()]);
+        activeBoardId.current = String(workspace.board.id);
+        setAccount(profileData.profile);
+        setThemePreference(profileData.profile.preferred_theme || 'system');
         setCsrfToken(session.csrf_token);
         setBoard(workspace.board);
         setBoards(workspace.boards);
+        setCorporateAccounts(workspace.corporate_accounts || []);
         setFlags(workspace.flags);
         setLists(workspace.lists);
         setTasks(workspace.tasks || []);
       })
-      .catch(() => window.location.replace('/'));
+      .catch((error) => setWorkspaceLoadError(error.message));
   }, []);
 
   useEffect(() => {
@@ -381,18 +454,41 @@ export function Workspace() {
   }
 
   async function selectBoard(boardId) {
+    const requestId = ++workspaceRequestId.current;
+    activeBoardId.current = String(boardId);
     if (String(boardId) === String(board.id)) return;
     try {
       const workspace = await getWorkspace(boardId);
+      if (requestId !== workspaceRequestId.current) return;
       setBoard(workspace.board);
       setBoards(workspace.boards);
+      setCorporateAccounts(workspace.corporate_accounts || []);
       setFlags(workspace.flags);
       setLists(workspace.lists);
       setTasks(workspace.tasks || []);
       setFilter('all');
       setActiveListId(null);
     } catch (error) {
-      setFeedback(error.message);
+      if (requestId === workspaceRequestId.current) {
+        activeBoardId.current = String(board.id);
+        setFeedback(error.message);
+      }
+    }
+  }
+
+  async function refreshBoardData(boardId) {
+    if (String(activeBoardId.current) !== String(boardId)) return;
+    const requestId = ++workspaceRequestId.current;
+    try {
+      const workspace = await getWorkspace(boardId);
+      if (requestId !== workspaceRequestId.current || String(activeBoardId.current) !== String(boardId)) return;
+      setLists(workspace.lists);
+      setFlags(workspace.flags);
+      setTasks(workspace.tasks || []);
+    } catch (error) {
+      if (requestId === workspaceRequestId.current && String(activeBoardId.current) === String(boardId)) {
+        setFeedback(error.message);
+      }
     }
   }
 
@@ -409,9 +505,11 @@ export function Workspace() {
         name: boardName.trim(),
         description: boardDescription.trim(),
         board_type: boardType,
+        ...(boardType === 'corporate' ? { corporate_account_id: Number(boardCorporateAccountId) } : {}),
       }, csrfToken);
       const workspace = await getWorkspace(createdBoard.id);
       setBoards(workspace.boards);
+      setCorporateAccounts(workspace.corporate_accounts || []);
       setBoard(workspace.board);
       setFlags(workspace.flags);
       setLists(workspace.lists);
@@ -422,6 +520,7 @@ export function Workspace() {
       setBoardName('');
       setBoardDescription('');
       setBoardType('personal');
+      setBoardCorporateAccountId('');
       setBoardFormOpen(false);
     } catch (error) {
       setBoardFormError(error.message);
@@ -435,8 +534,30 @@ export function Workspace() {
     setBoardName(item.name);
     setBoardDescription(item.description || '');
     setBoardType(item.board_type || 'personal');
+    setBoardCorporateAccountId(item.corporate_account_id ? String(item.corporate_account_id) : '');
     setBoardFormError('');
     setBoardSettingsOpen(true);
+  }
+
+  async function handleInviteMember(event) {
+    event.preventDefault();
+    if (!inviteIdentifier.trim() || !inviteAccountId || inviting) return;
+    setInviting(true);
+    setInviteMessage('');
+    try {
+      const result = await updateWorkspace({
+        action: 'invite_member',
+        corporate_account_id: Number(inviteAccountId),
+        identifier: inviteIdentifier.trim(),
+        role: inviteRole,
+      }, csrfToken);
+      setInviteMessage(result.email_sent ? 'Приглашение отправлено.' : 'Приглашение создано, но письмо не отправилось.');
+      if (result.email_sent) setInviteIdentifier('');
+    } catch (error) {
+      setInviteMessage(error.message);
+    } finally {
+      setInviting(false);
+    }
   }
 
   async function handleUpdateBoard(event) {
@@ -482,6 +603,7 @@ export function Workspace() {
         const workspace = await getWorkspace(replacementBoardId);
         setBoard(workspace.board);
         setBoards(workspace.boards);
+        setCorporateAccounts(workspace.corporate_accounts || []);
         setFlags(workspace.flags);
         setLists(workspace.lists);
         setTasks(workspace.tasks || []);
@@ -504,6 +626,39 @@ export function Workspace() {
     setFlags(workspace.flags);
     setLists(workspace.lists);
     setTasks(workspace.tasks || []);
+  }
+
+  function addCreatedFlag(flag) {
+    const appendUnique = (current) => current.some((item) => String(item.id) === String(flag.id))
+      ? current
+      : [...current, flag].sort((first, second) => first.name.localeCompare(second.name, 'ru'));
+    if (String(activeBoardId.current) === String(flag.board_id)) {
+      setFlags(appendUnique);
+    }
+    setSearchResults((current) => current?.map((result) => String(result.board_id) === String(flag.board_id)
+      ? { ...result, flags: appendUnique(result.flags) }
+      : result) ?? null);
+  }
+
+  async function createFlagForNewList(event) {
+    event.preventDefault();
+    const trimmedName = newFlagName.trim();
+    if (!trimmedName) return;
+    const details = event.currentTarget.closest('details');
+    setCreatingFlag(true);
+    setFeedback('');
+    try {
+      const { flag } = await updateWorkspace({ action: 'create_flag', board_id: board.id, name: trimmedName }, csrfToken);
+      addCreatedFlag(flag);
+      setSelectedFlagId(flag.id);
+      setNewFlagName('');
+      setFlagPickerOpen(false);
+      if (details) details.open = false;
+    } catch (error) {
+      setFeedback(error.message);
+    } finally {
+      setCreatingFlag(false);
+    }
   }
 
   function chooseFlag(id) {
@@ -545,7 +700,6 @@ export function Workspace() {
           : [...current, list.flag].sort((first, second) => first.name.localeCompare(second.name, 'ru')));
       }
       setActiveListId(list.id);
-      getWorkspace(board.id).then((data) => { setLists(data.lists); setFlags(data.flags); setTasks(data.tasks || []); });
       setName('');
       setExpanded(false);
       setImportant(false);
@@ -554,6 +708,7 @@ export function Workspace() {
       setNewFlagName('');
       setFlagPickerOpen(false);
       setFeedback('');
+      void refreshBoardData(board.id);
     } catch (error) {
       setFeedback(error.message);
     } finally {
@@ -572,6 +727,7 @@ export function Workspace() {
 
   async function openProfileSettings() {
     setProfileError('');
+    setProfileDraft(null);
     setProfileSettingsOpen(true);
     try {
       const { profile } = await getProfile();
@@ -581,6 +737,9 @@ export function Workspace() {
         email: profile.email || '',
         secondary_email: profile.secondary_email || '',
         about: profile.about || '',
+        github_url: profile.github_url || '',
+        telegram_url: profile.telegram_url || '',
+        preferred_theme: profile.preferred_theme || 'system',
         account_type: profile.account_type,
         avatar: profile.avatar,
         current_password: '',
@@ -627,6 +786,7 @@ export function Workspace() {
     try {
       const { profile } = await updateProfile(data, csrfToken);
       setAccount(profile);
+      setThemePreference(profile.preferred_theme || 'system');
       setProfileDraft({
         ...profile,
         email: profile.email || '',
@@ -645,7 +805,13 @@ export function Workspace() {
     }
   }
 
-  if (!account || !board) return <div className="app-loading" role="status">Загрузка рабочего пространства…</div>;
+  if (!account || !board) {
+    return <div className="app-loading" role={workspaceLoadError ? 'alert' : 'status'}>
+      {workspaceLoadError
+        ? <><p>{workspaceLoadError}</p><button type="button" onClick={() => window.location.reload()}>Повторить</button></>
+        : 'Загрузка рабочего пространства…'}
+    </div>;
+  }
 
   const activeList = lists.find((list) => list.id === activeListId);
   const selectedFlag = flags.find((flag) => flag.id === selectedFlagId);
@@ -657,23 +823,21 @@ export function Workspace() {
   });
   const canChangeUsername = !profileDraft?.username_change_available_at
     || Date.parse(profileDraft.username_change_available_at) <= Date.now();
+  const manageableCorporateAccounts = corporateAccounts.filter((item) => item.role === 'owner');
+  const canManageBoard = (item) => !item.corporate_account_id
+    || corporateAccounts.some((organization) => organization.id === item.corporate_account_id && organization.role === 'owner');
 
   return (
-    <div className={`workspace-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}${mobileMenuOpen ? ' is-mobile-menu-open' : ''}`} data-theme={theme}>
+    <div className={`workspace-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}${mobileMenuOpen ? ' is-mobile-menu-open' : ''}${registrationArrival ? ' is-registration-arrival' : ''}`} data-theme={theme}>
       <header className="workspace-header">
         <div className="workspace-header__left">
           <button className="mobile-menu-toggle" type="button" aria-label={mobileMenuOpen ? 'Закрыть меню фильтров' : 'Открыть меню фильтров'} aria-controls="workspace-sidebar" aria-expanded={mobileMenuOpen} onClick={() => { setSidebarCollapsed(false); setMobileMenuOpen((current) => !current); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-          <ThemeSwitch theme={theme} onChange={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />
-          <a className="workspace-brand" href="/pages/workspace.html" aria-label="To Do Inn! — рабочее пространство">
-            <span className="workspace-brand__mark" aria-hidden="true">✓</span>
-            <span>To Do Inn!</span>
-          </a>
+          <ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} />
         </div>
 
         <label className="workspace-search">
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
           <input type="search" placeholder="Поиск по всем доскам" aria-label="Поиск по всем доскам" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
-          <span className="workspace-search__shortcut" aria-hidden="true">⌘ K</span>
         </label>
 
         <details className="profile-menu">
@@ -696,10 +860,16 @@ export function Workspace() {
 
       <nav className="board-bar" aria-label="Рабочие доски">
         <button className={`sidebar-toggle ${sidebarCollapsed ? 'is-collapsed' : 'is-expanded'}`} type="button" aria-label={sidebarCollapsed ? 'Показать боковую панель' : 'Скрыть боковую панель'} aria-controls="workspace-sidebar" aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Показать боковую панель' : 'Скрыть боковую панель'} onClick={() => setSidebarCollapsed((current) => !current)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button>
-        <button className="board-bar__add" type="button" aria-label="Создать доску" title="Создать доску" onClick={() => { setBoardFormError(''); setBoardFormOpen(true); }}><PlusIcon /></button>
+        <button className="board-bar__add" type="button" aria-label="Создать доску" title="Создать доску" onClick={() => { setBoardFormError(''); setBoardType('personal'); setBoardCorporateAccountId(String(manageableCorporateAccounts[0]?.id || '')); setBoardFormOpen(true); }}><PlusIcon /></button>
+        {manageableCorporateAccounts.length > 0 && <button className="board-bar__invite" type="button" onClick={() => {
+          setInviteAccountId(String(manageableCorporateAccounts[0].id));
+          setInviteIdentifier('');
+          setInviteMessage('');
+          setInviteDialogOpen(true);
+        }}>Пригласить участника</button>}
         {boards.map((item) => <div className={`board-tab-group${String(item.id) === String(board.id) ? ' is-active' : ''}`} key={item.id}>
           <button className="board-tab" type="button" aria-current={String(item.id) === String(board.id) ? 'page' : undefined} onClick={() => selectBoard(item.id)}>{item.name}</button>
-          <button className="board-tab-settings" type="button" disabled={String(item.id) !== String(board.id)} aria-label={`Настройки доски «${item.name}»`} title="Настройки доски" onClick={() => openBoardSettings(item)}><SlidersIcon /></button>
+          {canManageBoard(item) && <button className="board-tab-settings" type="button" disabled={String(item.id) !== String(board.id)} aria-label={`Настройки доски «${item.name}»`} title="Настройки доски" onClick={() => openBoardSettings(item)}><SettingsIcon /></button>}
         </div>)}
       </nav>
 
@@ -751,13 +921,13 @@ export function Workspace() {
 
                     <details className="flag-picker" open={flagPickerOpen} onToggle={(event) => setFlagPickerOpen(event.currentTarget.open)}>
                       <summary className="list-option-button" aria-label="Назначить флаг" title="Назначить флаг">
-                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 21V5m0 0c5-4 9 4 14 0v11c-5 4-9-4-14 0" /></svg>
+                        {selectedFlag ? <FlagIcon color={selectedFlag.color} /> : <span className="flag-picker__empty-icon" aria-hidden="true" />}
                         <span>{newFlagName ? 'Новый флаг' : selectedFlag?.name || 'Флаг'}</span>
                       </summary>
                       <div className="flag-picker__panel">
                         <p className="flag-picker__title">Выберите флаг</p>
                         <button className={`flag-picker__choice${selectedFlagId === null && !newFlagName ? ' is-selected' : ''}`} type="button" aria-pressed={selectedFlagId === null && !newFlagName} onClick={() => chooseFlag(null)}>Без флага</button>
-                        <div className="flag-picker__existing">
+              <div className="flag-picker__existing">
                           {flags.map((flag) => (
                             <button className={`flag-picker__choice${selectedFlagId === flag.id ? ' is-selected' : ''}`} type="button" key={flag.id} aria-pressed={selectedFlagId === flag.id} onClick={() => chooseFlag(flag.id)}>
                               <FlagIcon color={flag.color} /><span>{flag.name}</span>
@@ -765,7 +935,7 @@ export function Workspace() {
                           ))}
                         </div>
                         <label className="flag-picker__custom-label" htmlFor="custom-flag-name">Или создайте свой</label>
-                        <input className="flag-picker__custom-input" id="custom-flag-name" name="todo-flag-label" type="text" maxLength="40" placeholder="Название флага" autoComplete="off" autoCorrect="off" spellCheck="false" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setSelectedFlagId(null); }} />
+                        <div className="flag-picker__create-row"><input className="flag-picker__custom-input" id="custom-flag-name" name="todo-flag-label" type="text" maxLength="40" placeholder="Название флага" autoComplete="off" autoCorrect="off" spellCheck="false" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setSelectedFlagId(null); }} />{newFlagName.trim() && <button className="flag-picker__create-button" type="button" aria-label="Создать флаг" title="Создать флаг" disabled={creatingFlag} onClick={createFlagForNewList}><PlusIcon /></button>}</div>
                       </div>
                     </details>
 
@@ -790,10 +960,10 @@ export function Workspace() {
               {!searchLoading && !searchError && searchResults?.length === 0 && <p className="workspace-search-results__message">Совпадений не найдено</p>}
               {searchResults?.map((result) => <div className="workspace-search-result" data-theme={result.theme} key={`${result.board_id}:${result.id}`}>
                 <p className="workspace-search-result__board">{result.board_name}</p>
-                <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} />
+                <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onFlagCreated={addCreatedFlag} />
               </div>)}
             </div> : <div className="workspace-lists__items">
-              {[...visibleLists].reverse().map((list) => <ListCard key={list.id} list={list} flags={flags} tasks={tasks.filter((task) => task.list_id === list.id)} csrfToken={csrfToken} onChange={() => getWorkspace(board.id).then((data) => { setLists(data.lists); setFlags(data.flags); setTasks(data.tasks || []); })} />)}
+              {[...visibleLists].reverse().map((list) => <ListCard key={list.id} list={list} flags={flags} tasks={tasks.filter((task) => task.list_id === list.id)} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onFlagCreated={addCreatedFlag} />)}
             </div>}
           </section>
           </>}
@@ -801,7 +971,7 @@ export function Workspace() {
       </div>
 
       <footer className="workspace-footer">
-        <span>To Do Inn! <span aria-hidden="true">·</span> Пространство для важных дел</span>
+        <span className="workspace-footer__brand"><img className="workspace-footer__logo" src={brandLogo} alt="To Do Inn!" /><span aria-hidden="true">·</span> Пространство для важных дел</span>
         <a href="https://github.com/Daniar-cmd/To-Do-Inn" target="_blank" rel="noreferrer">О проекте</a>
       </footer>
       {(boardFormOpen || boardSettingsOpen) && <div className="board-form-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creatingBoard) { setBoardFormOpen(false); setBoardSettingsOpen(false); } }}>
@@ -810,20 +980,33 @@ export function Workspace() {
           <form onSubmit={boardSettingsOpen ? handleUpdateBoard : handleCreateBoard}>
             <label className="board-form-dialog__field"><span>Название доски <b aria-hidden="true">*</b></span><input autoFocus required maxLength="60" value={boardName} onChange={(event) => setBoardName(event.target.value)} placeholder="Например, Домашние дела" /></label>
             <label className="board-form-dialog__field"><span>Описание <small>необязательно</small></span><textarea maxLength="2000" value={boardDescription} onChange={(event) => setBoardDescription(event.target.value)} placeholder="Кратко опишите назначение доски" /></label>
-            <fieldset className="board-form-dialog__types"><legend>Для кого эта доска?</legend>
+            <fieldset className="board-form-dialog__types type-choice-grid"><legend>Для кого эта доска?</legend>
               {[
-                ['personal', 'Для себя'],
-                ['community', 'Для сообщества'],
-                ['corporate', 'Корпоративная'],
-              ].map(([value, label]) => <label className={`board-form-dialog__type${boardType === value ? ' is-selected' : ''}`} key={value}>
-                <input type="radio" name="board-type" value={value} checked={boardType === value} onChange={(event) => setBoardType(event.target.value)} />
+                ['personal', 'Личный'],
+                ['community', 'Для команды'],
+                ...(manageableCorporateAccounts.length > 0 && (!boardSettingsOpen || Boolean(boards.find((item) => item.id === editingBoardId)?.corporate_account_id)) ? [['corporate', 'Организации']] : []),
+              ].map(([value, label]) => <label className={`board-form-dialog__type type-choice${boardType === value ? ' is-selected' : ''}`} key={value}>
+                <input type="radio" name="board-type" value={value} checked={boardType === value} onChange={(event) => { setBoardType(event.target.value); if (event.target.value === 'corporate' && !boardCorporateAccountId) setBoardCorporateAccountId(String(manageableCorporateAccounts[0]?.id || '')); }} />
                 <BoardTypeIcon type={value} />
                 <span>{label}</span>
               </label>)}
             </fieldset>
+            {boardType === 'corporate' && <label className="board-form-dialog__field"><span>Организация</span><select value={boardCorporateAccountId || String(manageableCorporateAccounts[0]?.id || '')} onChange={(event) => setBoardCorporateAccountId(event.target.value)} required>{manageableCorporateAccounts.map((organization) => <option value={organization.id} key={organization.id}>{organization.name}</option>)}</select></label>}
             {boardFormError && <p className="board-form-dialog__error" role="alert">{boardFormError}</p>}
-            {boardSettingsOpen && <><button className="board-form-dialog__delete" type="button" onClick={() => { setBoardDeleteError(''); setBoardDeleteTarget(boards.find((item) => item.id === editingBoardId)); }} disabled={creatingBoard || boards.length <= 1}>Удалить доску</button>{boards.length <= 1 && <small className="board-form-dialog__delete-note">Нельзя удалить последнюю доску аккаунта.</small>}</>}
+            {boardSettingsOpen && <><button className="board-form-dialog__delete" type="button" onClick={() => { setBoardDeleteError(''); setBoardDeleteTarget(boards.find((item) => item.id === editingBoardId)); }} disabled={creatingBoard || boards.length <= 1}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-.9 14H5.9L5 6m4 4v6m6-6v6" /></svg><span>Удалить доску</span></button>{boards.length <= 1 && <small className="board-form-dialog__delete-note">Нельзя удалить последнюю доску аккаунта.</small>}</>}
             <div className="board-form-dialog__actions"><button type="button" onClick={() => { setBoardFormOpen(false); setBoardSettingsOpen(false); }} disabled={creatingBoard}>Отмена</button><button type="submit" disabled={creatingBoard}>{creatingBoard ? (boardSettingsOpen ? 'Сохраняем…' : 'Создаём…') : (boardSettingsOpen ? 'Сохранить изменения' : 'Создать доску')}</button></div>
+          </form>
+        </section>
+      </div>}
+      {inviteDialogOpen && <div className="board-form-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !inviting) setInviteDialogOpen(false); }}>
+        <section className="board-form-dialog" role="dialog" aria-modal="true" aria-labelledby="invite-member-title">
+          <header className="board-form-dialog__header"><h2 id="invite-member-title">Пригласить участника</h2><button type="button" aria-label="Закрыть форму" onClick={() => setInviteDialogOpen(false)} disabled={inviting}>×</button></header>
+          <form onSubmit={handleInviteMember}>
+            {manageableCorporateAccounts.length > 1 && <label className="board-form-dialog__field"><span>Организация</span><select value={inviteAccountId} onChange={(event) => setInviteAccountId(event.target.value)}>{manageableCorporateAccounts.map((organization) => <option value={organization.id} key={organization.id}>{organization.name}</option>)}</select></label>}
+            <label className="board-form-dialog__field"><span>Логин или e-mail</span><input autoFocus required maxLength="254" value={inviteIdentifier} onChange={(event) => setInviteIdentifier(event.target.value)} placeholder="@username или name@example.com" /></label>
+            <label className="board-form-dialog__field"><span>Роль</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="admin">admin</option><option value="manager">manager</option><option value="support">support</option></select></label>
+            {inviteMessage && <p className="board-form-dialog__error" role="status">{inviteMessage}</p>}
+            <div className="board-form-dialog__actions"><button type="button" onClick={() => setInviteDialogOpen(false)} disabled={inviting}>Закрыть</button><button type="submit" disabled={inviting}>{inviting ? 'Отправляем…' : 'Отправить приглашение'}</button></div>
           </form>
         </section>
       </div>}
@@ -838,20 +1021,25 @@ export function Workspace() {
       {profileSettingsOpen && <div className="profile-settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !profileSaving) setProfileSettingsOpen(false); }}>
         <section className="profile-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
           <header className="profile-settings-dialog__header"><div><p>АККАУНТ</p><h2 id="profile-settings-title">Настройки профиля</h2></div><button type="button" aria-label="Закрыть настройки" onClick={() => setProfileSettingsOpen(false)} disabled={profileSaving}>×</button></header>
-          {!profileDraft ? <p className="profile-settings-dialog__loading" role="status">Загружаем настройки…</p> : <form onSubmit={saveProfileSettings}>
+          {!profileDraft && !profileError && <p className="profile-settings-dialog__loading" role="status">Загружаем настройки…</p>}
+          {profileError && !profileDraft && <p className="profile-settings-dialog__error" role="alert">{profileError}</p>}
+          {profileDraft && <form onSubmit={saveProfileSettings}>
             <section className="profile-settings-dialog__avatar-section" aria-label="Аватар профиля">
               <span className="profile-settings-dialog__avatar">{profileDraft.avatar ? <img src={profileDraft.avatar} alt="Аватар профиля" /> : <UserIcon />}</span>
               <div><strong>Фото профиля</strong><p>JPEG, PNG или WebP, до 1 МБ</p><div className="profile-settings-dialog__avatar-actions"><label className="profile-settings-dialog__file-button">{profileDraft.avatar ? 'Изменить фото' : 'Загрузить фото'}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarFile} /></label>{profileDraft.avatar && <button type="button" onClick={() => { setProfileDraft((current) => ({ ...current, avatar: null })); setAvatarChanged(true); }}>Удалить</button>}</div></div>
             </section>
-            <label className="profile-settings-dialog__field"><span>Логин</span><input required maxLength="24" pattern="[A-Za-z][A-Za-z0-9_]{2,23}" value={profileDraft.username} disabled={!canChangeUsername} onChange={(event) => setProfileDraft((current) => ({ ...current, username: event.target.value }))} />{!canChangeUsername && <small>Логин можно будет изменить после {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(profileDraft.username_change_available_at))}.</small>}<small>Логин также используется для входа.</small></label>
+            <label className="profile-settings-dialog__field"><span>Логин</span><input required maxLength="24" pattern="(?:[A-Za-z][A-Za-z0-9_@-]{3,23}|@[A-Za-z][A-Za-z0-9_-]{2,22})" value={profileDraft.username} disabled={!canChangeUsername} onChange={(event) => setProfileDraft((current) => ({ ...current, username: event.target.value }))} />{!canChangeUsername && <small>Логин можно будет изменить после {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(profileDraft.username_change_available_at))}.</small>}<small>Логин также используется для входа.</small></label>
             <div className="profile-settings-dialog__two-columns">
               <label className="profile-settings-dialog__field"><span>Основная почта</span><input type="email" maxLength="254" autoComplete="email" value={profileDraft.email} onChange={(event) => setProfileDraft((current) => ({ ...current, email: event.target.value }))} placeholder="name@example.com" /></label>
               <label className="profile-settings-dialog__field"><span>Дополнительная почта</span><input type="email" maxLength="254" autoComplete="email" value={profileDraft.secondary_email} onChange={(event) => setProfileDraft((current) => ({ ...current, secondary_email: event.target.value }))} placeholder="name@example.com" /></label>
             </div>
             <label className="profile-settings-dialog__field"><span>О себе</span><textarea maxLength="1200" value={profileDraft.about} onChange={(event) => setProfileDraft((current) => ({ ...current, about: event.target.value }))} placeholder="Расскажите немного о себе" /></label>
-            <fieldset className="profile-settings-dialog__account-type"><legend>Тип аккаунта</legend><div>{[
+            <label className="profile-settings-dialog__field"><span>GitHub</span><span className="profile-settings-social"><svg className="is-github" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.56.1.76-.24.76-.54v-2.08c-3.1.67-3.76-1.32-3.76-1.32-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.68.08-.68 1.12.08 1.71 1.15 1.71 1.15 1 1.7 2.61 1.21 3.25.93.1-.72.39-1.21.71-1.49-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .94-.3 3.06 1.15a10.6 10.6 0 0 1 5.57 0c2.12-1.45 3.05-1.15 3.05-1.15.61 1.54.23 2.68.12 2.96.71.78 1.14 1.78 1.14 3.01 0 4.29-2.62 5.23-5.11 5.5.4.35.75 1.03.75 2.08v3.09c0 .3.2.65.77.54A11.1 11.1 0 0 0 12 .9Z"/></svg><input type="url" maxLength="255" value={profileDraft.github_url} onChange={(event) => setProfileDraft((current) => ({ ...current, github_url: event.target.value }))} placeholder="https://github.com/username" /></span></label>
+            <label className="profile-settings-dialog__field"><span>Telegram</span><span className="profile-settings-social"><svg className="is-telegram" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.7 3.3 18.5 20c-.24 1.18-.87 1.47-1.76.91l-4.86-3.58-2.35 2.26c-.26.26-.48.48-.98.48l.35-4.94 8.99-8.12c.39-.35-.08-.55-.6-.2L6.17 13.87l-4.8-1.5c-1.04-.33-1.06-1.04.22-1.55L20.38 3.1c.86-.32 1.61.2 1.33.2Z"/></svg><input type="url" maxLength="255" value={profileDraft.telegram_url} onChange={(event) => setProfileDraft((current) => ({ ...current, telegram_url: event.target.value }))} placeholder="https://t.me/username" /></span></label>
+            <label className="profile-settings-dialog__field"><span>Тема по умолчанию</span><select value={profileDraft.preferred_theme} onChange={(event) => setProfileDraft((current) => ({ ...current, preferred_theme: event.target.value }))}><option value="light">Светлая</option><option value="dark">Тёмная</option><option value="system">Как в системе</option></select></label>
+            <fieldset className="profile-settings-dialog__account-type type-choice-grid"><legend>Тип аккаунта</legend><div>{[
               ['individual', 'Личный'], ['team', 'Для команды'], ['corporate', 'Корпоративный'],
-            ].map(([value, label]) => <label className={profileDraft.account_type === value ? 'is-selected' : ''} key={value}><input type="radio" name="profile-account-type" value={value} checked={profileDraft.account_type === value} onChange={(event) => setProfileDraft((current) => ({ ...current, account_type: event.target.value }))} /><BoardTypeIcon type={value === 'team' ? 'community' : value} /><span>{label}</span></label>)}</div></fieldset>
+            ].map(([value, label]) => <label className={`type-choice${profileDraft.account_type === value ? ' is-selected' : ''}`} key={value}><input type="radio" name="profile-account-type" value={value} checked={profileDraft.account_type === value} onChange={(event) => setProfileDraft((current) => ({ ...current, account_type: event.target.value }))} /><BoardTypeIcon type={value === 'team' ? 'community' : value} /><span>{label}</span></label>)}</div></fieldset>
             <details className="profile-settings-dialog__password"><summary>Изменить пароль</summary><div className="profile-settings-dialog__password-fields"><label className="profile-settings-dialog__field"><span>Текущий пароль</span><input type="password" autoComplete="current-password" value={profileDraft.current_password} onChange={(event) => setProfileDraft((current) => ({ ...current, current_password: event.target.value }))} /></label><div className="profile-settings-dialog__two-columns"><label className="profile-settings-dialog__field"><span>Новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.new_password} onChange={(event) => setProfileDraft((current) => ({ ...current, new_password: event.target.value }))} /></label><label className="profile-settings-dialog__field"><span>Повторите новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.confirm_password} onChange={(event) => setProfileDraft((current) => ({ ...current, confirm_password: event.target.value }))} /></label></div></div></details>
             {profileError && <p className="profile-settings-dialog__error" role="alert">{profileError}</p>}
             <div className="profile-settings-dialog__actions"><button type="button" onClick={() => setProfileSettingsOpen(false)} disabled={profileSaving}>Отмена</button><button type="submit" disabled={profileSaving}>{profileSaving ? 'Сохраняем…' : 'Сохранить настройки'}</button></div>

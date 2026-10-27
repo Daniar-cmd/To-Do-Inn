@@ -4,9 +4,13 @@ namespace Tests\Feature;
 
 use App\Models\Board;
 use App\Models\User;
+use App\Mail\EmailVerificationCode;
+use App\Mail\CorporateAccountInvitation;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -14,6 +18,8 @@ use Tests\DatabaseTestCase;
 
 class AuthTest extends DatabaseTestCase
 {
+    private const WEBP = 'UklGRjoAAABXRUJQVlA4IC4AAADwAQCdASoBAAEAAUAmJaACdLoB+AAEgwAA/vAb3/89M15g/yc/+Uq8Fjc3wAAA';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -24,7 +30,7 @@ class AuthTest extends DatabaseTestCase
     {
         $response = $this->getAuth()->assertOk()->assertExactJson([
             'success' => true,
-            'data' => ['csrf_token' => str_repeat('a', 40), 'user' => null],
+            'data' => ['csrf_token' => str_repeat('a', 40), 'user' => null, 'corporate_account' => null],
         ])->assertHeader('Cache-Control', 'no-store, private')
             ->assertHeader('X-Content-Type-Options', 'nosniff')
             ->assertCookie('todo_inn_laravel_session')
@@ -41,20 +47,29 @@ class AuthTest extends DatabaseTestCase
     {
         $oldId = $this->app['session.store']->getId();
         $oldToken = $this->app['session.store']->token();
-        $response = $this->postAuth($this->registration())
+        $response = $this->postRegistration($this->registration())
             ->assertCreated()
             ->assertJsonStructure(['success', 'data' => ['user' => ['id', 'username', 'account_type']]])
             ->assertHeader('X-Content-Type-Options', 'nosniff');
 
         $user = User::findOrFail($response->json('data.user.id'));
-        $this->assertSame('NewUser', $user->username);
-        $this->assertNull($user->email);
+        $this->assertSame('@NewUser', $user->username);
+        $this->assertSame('Имя', $user->first_name);
+        $this->assertSame('Фамилия', $user->last_name);
+        $this->assertNull($user->middle_name);
+        $this->assertNotNull($user->email);
         $this->assertSame('individual', $user->account_type);
-        $this->assertTrue(Hash::check('Password123', $user->getAuthPassword()));
+        $this->assertTrue(Hash::check('Password123!', $user->getAuthPassword()));
         $this->assertSame('argon2id', password_get_info($user->getAuthPassword())['algoName']);
         $this->assertSame(1, $user->boards()->count());
         $this->assertSame('👋 Hello World!', $user->boards()->first()->name);
         $this->assertTrue($user->boards()->first()->is_default);
+        $this->assertDatabaseHas('task_lists', [
+            'user_id' => $user->id,
+            'board_id' => $user->boards()->first()->id,
+            'name' => '👋 Hello World!',
+            'description' => 'Это ваш первый список',
+        ]);
         $this->assertNotSame($oldId, $this->app['session.store']->getId());
         $this->assertNotSame($oldToken, $this->app['session.store']->token());
 
@@ -62,26 +77,422 @@ class AuthTest extends DatabaseTestCase
         $this->assertSame(['id', 'username', 'account_type'], array_keys($response->json('data.user')));
     }
 
-    public function test_optional_email_and_account_type_defaults_match_the_legacy_api(): void
+    public function test_registration_requires_personal_data_consent_and_saves_optional_preferences(): void
     {
-        $response = $this->postAuth($this->registration(['email' => null, 'account_type' => null]))->assertCreated();
+        $input = $this->registration([
+            'secondary_email' => 'backup@example.com',
+            'about' => 'Learning and building.',
+            'github_url' => 'https://github.com/example-user',
+            'telegram_url' => 'https://t.me/example_user',
+            'preferred_theme' => 'dark',
+            'avatar' => 'data:image/webp;base64,'.self::WEBP,
+            'marketing_consent' => true,
+        ]);
+        unset($input['personal_data_consent']);
+        $this->postRegistration($input)->assertUnprocessable()
+            ->assertJsonPath('error', 'Для регистрации необходимо согласиться на обработку персональных данных.');
+        $this->assertDatabaseMissing('users', ['username' => '@NewUser']);
+
+        $input['personal_data_consent'] = true;
+        $response = $this->postRegistration($input)->assertCreated();
         $user = User::findOrFail($response->json('data.user.id'));
 
-        $this->assertNull($user->email);
+        $this->assertSame('backup@example.com', $user->secondary_email);
+        $this->assertSame('Learning and building.', $user->about);
+        $this->assertSame('https://github.com/example-user', $user->github_url);
+        $this->assertSame('https://t.me/example_user', $user->telegram_url);
+        $this->assertSame('dark', $user->preferred_theme);
+        $this->assertSame('image/webp', $user->avatar_mime);
+        $encodedAvatar = DB::table('users')->where('id', $user->id)->selectRaw("encode(avatar_data, 'base64') AS avatar_base64")->value('avatar_base64');
+        $this->assertSame(self::WEBP, str_replace(["\r", "\n"], '', $encodedAvatar));
+        $this->assertTrue($user->marketing_consent);
+        $this->assertNotNull($user->marketing_consent_at);
+        $this->assertNotNull($user->personal_data_consent_at);
+        $this->assertSame('2026-10-draft-1', $user->personal_data_consent_version);
+    }
+
+    public function test_email_is_required_and_account_type_keeps_its_default(): void
+    {
+        $this->postRegistration($this->registration(['email' => null]))->assertUnprocessable();
+        $response = $this->postRegistration($this->registration(['account_type' => null]))->assertCreated();
+        $user = User::findOrFail($response->json('data.user.id'));
+
+        $this->assertNotNull($user->email);
         $this->assertSame('individual', $user->account_type);
     }
 
     public function test_registration_normalizes_email_and_keeps_the_selected_account_type(): void
     {
-        $response = $this->postAuth($this->registration([
-            'email' => 'Person@Example.COM', 'account_type' => 'team', 'id' => 0, 'is_admin' => true,
-        ]))->assertCreated();
-        $user = User::findOrFail($response->json('data.user.id'));
+        $input = $this->registration([
+            'email' => 'Person@Example.COM', 'account_type' => 'corporate',
+            'organization_type' => 'ООО', 'organization_name' => 'Ромашка & Co. №1', 'id' => 0, 'is_admin' => true,
+        ]);
+        $input['administrators'] = [['role' => 'owner', 'identifier' => 'person@example.com']];
+        $response = $this->postRegistration($input)->assertCreated();
+        $accountId = $response->json('data.corporate_account.id');
 
-        $this->assertSame('person@example.com', $user->email);
-        $this->assertSame('team', $user->account_type);
-        $this->assertFalse(array_key_exists('is_admin', $user->getAttributes()));
-        $this->assertGreaterThan(0, $user->id);
+        $this->assertNull($response->json('data.user'));
+        $this->assertDatabaseHas('corporate_accounts', [
+            'id' => $accountId, 'root_email' => 'person@example.com', 'root_username' => '@NewUser',
+            'organization_type' => 'ООО', 'organization_name' => 'Ромашка & Co. №1',
+        ]);
+        $this->assertDatabaseHas('corporate_account_members', [
+            'corporate_account_id' => $accountId, 'user_id' => null, 'email' => 'person@example.com', 'role' => 'owner',
+        ]);
+        $this->assertDatabaseMissing('users', ['username' => '@NewUser']);
+    }
+
+    public function test_registration_accepts_the_new_login_and_name_characters(): void
+    {
+        $response = $this->postRegistration($this->registration([
+            'username' => '@A-user_2', 'first_name' => 'Ёлка—', 'last_name' => 'Smith-Ж', 'middle_name' => 'Отчество',
+        ]))->assertCreated();
+
+        $user = User::findOrFail($response->json('data.user.id'));
+        $this->assertSame('@A-user_2', $user->username);
+        $this->assertSame('Ёлка—', $user->first_name);
+        $this->assertSame('Smith-Ж', $user->last_name);
+        $this->assertSame('Отчество', $user->middle_name);
+    }
+
+    public function test_corporate_registration_requires_and_saves_valid_organization_details(): void
+    {
+        $this->postRegistration($this->registration(['account_type' => 'corporate']))->assertUnprocessable();
+
+        $firstRegistration = $this->registration([
+            'account_type' => 'corporate', 'first_name' => '', 'last_name' => '',
+            'organization_type' => 'ГУП', 'organization_name' => 'АО «Пример-1» & Co.',
+            'secondary_email' => 'contact@example.com', 'about' => 'Организационное описание',
+            'github_url' => 'https://github.com/example-org', 'preferred_theme' => 'light', 'marketing_consent' => true,
+        ]);
+        $firstRegistration['administrators'] = [['role' => 'owner', 'identifier' => $firstRegistration['email']]];
+        $response = $this->postRegistration($firstRegistration)->assertCreated();
+        $this->assertNull($response->json('data.user'));
+        $this->assertDatabaseHas('corporate_accounts', [
+            'root_username' => '@NewUser', 'organization_type' => 'ГУП', 'organization_name' => 'АО «Пример-1» & Co.',
+            'secondary_email' => 'contact@example.com', 'description' => 'Организационное описание',
+            'github_url' => 'https://github.com/example-org', 'preferred_theme' => 'light', 'marketing_consent' => true,
+        ]);
+        $account = DB::table('corporate_accounts')->where('root_username', '@NewUser')->first();
+        $this->assertNotNull($account->personal_data_consent_at);
+        $this->assertSame('2026-10-draft-1', $account->personal_data_consent_version);
+
+        $secondRegistration = $this->registration([
+            'username' => '@MupOrg',
+            'account_type' => 'corporate', 'first_name' => '', 'last_name' => '',
+            'organization_type' => 'МУП', 'organization_name' => 'Муниципальная организация',
+        ]);
+        $secondRegistration['administrators'] = [['role' => 'owner', 'identifier' => $secondRegistration['email']]];
+        $anotherResponse = $this->postRegistration($secondRegistration)->assertCreated();
+        $this->assertDatabaseHas('corporate_accounts', [
+            'id' => $anotherResponse->json('data.corporate_account.id'), 'organization_type' => 'МУП',
+        ]);
+    }
+
+    public function test_corporate_owner_can_be_a_different_user_and_receives_an_invitation(): void
+    {
+        Mail::fake();
+        $input = $this->registration([
+            'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Ромашка',
+        ]);
+        $ownerEmail = 'separate-owner@example.com';
+        $input['administrators'] = [['role' => 'owner', 'identifier' => $ownerEmail]];
+
+        $response = $this->postRegistration($input)->assertCreated();
+        $accountId = $response->json('data.corporate_account.id');
+        $this->assertDatabaseHas('corporate_accounts', ['id' => $accountId, 'created_by_user_id' => null]);
+        $this->assertDatabaseHas('corporate_account_members', [
+            'corporate_account_id' => $accountId, 'email' => $ownerEmail, 'role' => 'owner', 'user_id' => null,
+        ]);
+        Mail::assertSent(CorporateAccountInvitation::class, fn (CorporateAccountInvitation $mail): bool => $mail->hasTo($ownerEmail) && $mail->role === 'owner');
+    }
+
+    public function test_organization_and_director_can_share_email_and_root_login_is_separate(): void
+    {
+        $email = 'director-company@example.com';
+        $director = $this->createUser();
+        $director->forceFill(['email' => $email])->save();
+
+        $input = $this->registration([
+            'username' => '@CompanyRoot', 'email' => $email,
+            'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Пример',
+        ]);
+        $input['administrators'] = [['role' => 'owner', 'identifier' => $email]];
+
+        $response = $this->postRegistration($input)->assertCreated();
+        $accountId = $response->json('data.corporate_account.id');
+        $this->assertNull($response->json('data.user'));
+        $this->assertSame($email, User::findOrFail($director->id)->email);
+        $this->assertDatabaseHas('corporate_accounts', ['id' => $accountId, 'root_email' => $email]);
+        $this->assertDatabaseHas('corporate_account_members', [
+            'corporate_account_id' => $accountId, 'email' => $email, 'role' => 'owner', 'user_id' => null,
+        ]);
+
+        $this->postAuth(['action' => 'login', 'username' => '@CompanyRoot', 'password' => 'Password123!'])
+            ->assertOk()->assertJsonPath('data.user', null)->assertJsonPath('data.corporate_account.id', $accountId);
+        $this->getAuth()->assertJsonPath('data.user', null)->assertJsonPath('data.corporate_account.id', $accountId);
+    }
+
+    public function test_invited_owner_gets_an_organization_board_after_creating_personal_account(): void
+    {
+        Mail::fake();
+        $ownerEmail = 'company-root@example.com';
+        $corporate = $this->registration([
+            'username' => '@RootCompany', 'email' => 'company-root@example.com',
+            'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Owner Workspace',
+        ]);
+        $corporate['administrators'] = [['role' => 'owner', 'identifier' => $ownerEmail]];
+        $accountId = $this->postRegistration($corporate)->assertCreated()->json('data.corporate_account.id');
+
+        $token = null;
+        Mail::assertSent(CorporateAccountInvitation::class, function (CorporateAccountInvitation $mail) use (&$token, $ownerEmail): bool {
+            if ($mail->role !== 'owner' || !$mail->hasTo($ownerEmail)) return false;
+            parse_str((string) parse_url($mail->invitationUrl, PHP_URL_QUERY), $query);
+            $token = $query['token'] ?? null;
+
+            return true;
+        });
+        $this->assertIsString($token);
+        $this->postAuth(['action' => 'accept_corporate_invitation', 'token' => $token])
+            ->assertOk()->assertJsonPath('data.registered', false)->assertJsonPath('data.role', 'owner');
+
+        $personal = $this->registration(['username' => '@Director', 'email' => $ownerEmail]);
+        $userId = $this->postRegistration($personal)->assertCreated()->json('data.user.id');
+        $board = DB::table('boards')->where('corporate_account_id', $accountId)->first();
+        $this->assertNotNull($board);
+        $this->assertSame($userId, (int) $board->user_id);
+        $this->assertDatabaseHas('corporate_account_members', [
+            'corporate_account_id' => $accountId, 'user_id' => $userId, 'role' => 'owner',
+        ]);
+        $this->assertDatabaseHas('task_lists', ['board_id' => $board->id, 'user_id' => $userId, 'name' => '👋 Hello World!']);
+    }
+
+    public function test_corporate_registration_requires_one_owner_and_allows_at_most_five_roles(): void
+    {
+        $input = $this->registration([
+            'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Ромашка',
+        ]);
+        $input['administrators'] = [['role' => 'admin', 'identifier' => $input['email']]];
+        $this->postRegistration($input)->assertUnprocessable()
+            ->assertJsonPath('error', 'Первая строка должна содержать единственного владельца аккаунта.');
+
+        $input['administrators'] = [
+            ['role' => 'admin', 'identifier' => 'member@example.com'],
+            ['role' => 'owner', 'identifier' => $input['email']],
+        ];
+        $this->postRegistration($input)->assertUnprocessable()
+            ->assertJsonPath('error', 'Первая строка должна содержать единственного владельца аккаунта.');
+
+        $input['administrators'] = [['role' => 'owner', 'identifier' => $input['email']]];
+        for ($index = 1; $index <= 5; $index++) {
+            $input['administrators'][] = ['role' => 'admin', 'identifier' => "member{$index}@example.com"];
+        }
+        $this->postRegistration($input)->assertUnprocessable();
+        $this->assertDatabaseMissing('users', ['username' => $input['username']]);
+    }
+
+    public function test_existing_username_can_be_used_for_an_email_invitation(): void
+    {
+        Mail::fake();
+        $invitee = $this->createUser();
+        $invitee->forceFill([
+            'username' => '@Existing'.bin2hex(random_bytes(3)),
+            'email' => 'existing-admin@example.com',
+        ])->save();
+        $input = $this->registration([
+            'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Ромашка',
+        ]);
+        $input['administrators'] = [
+            ['role' => 'owner', 'identifier' => $input['email']],
+            ['role' => 'support', 'identifier' => $invitee->username],
+        ];
+
+        $this->postRegistration($input)->assertCreated();
+        $this->assertDatabaseHas('corporate_account_members', [
+            'email' => 'existing-admin@example.com', 'role' => 'support', 'user_id' => null,
+        ]);
+        Mail::assertSent(CorporateAccountInvitation::class, fn (CorporateAccountInvitation $mail): bool => $mail->hasTo('existing-admin@example.com'));
+    }
+
+    public function test_admin_identifier_validation_rejects_unknown_usernames_and_accepts_registered_usernames(): void
+    {
+        $this->postAuth(['action' => 'validate_corporate_admin_identifier', 'identifier' => '@MissingUser'])
+            ->assertUnprocessable()
+            ->assertJsonPath('error', 'Не удалось найти пользователя с таким логином и e-mail.');
+
+        $username = '@Known'.bin2hex(random_bytes(3));
+        $user = $this->createUser();
+        $user->forceFill(['username' => $username, 'email' => 'known-admin@example.com'])->save();
+
+        $this->postAuth(['action' => 'validate_corporate_admin_identifier', 'identifier' => $username])
+            ->assertOk()->assertJsonPath('data.valid', true);
+    }
+
+    public function test_registration_username_availability_reports_personal_and_organization_conflicts_early(): void
+    {
+        $personalUsername = '@Personal'.bin2hex(random_bytes(3));
+        $user = $this->createUser();
+        $user->forceFill(['username' => $personalUsername])->save();
+
+        $this->postAuth(['action' => 'validate_registration_username', 'username' => $personalUsername])
+            ->assertConflict()->assertJsonPath('error', 'Этот логин уже используется личным аккаунтом.');
+
+        $rootUsername = '@Company'.bin2hex(random_bytes(3));
+        DB::table('corporate_accounts')->insert([
+            'root_username' => $rootUsername,
+            'root_email' => 'root-'.bin2hex(random_bytes(3)).'@example.com',
+            'root_password_hash' => Hash::make('RootPassword123!'),
+        ]);
+        $this->postAuth(['action' => 'validate_registration_username', 'username' => $rootUsername])
+            ->assertConflict()->assertJsonPath('error', 'Этот логин уже используется аккаунтом организации.');
+
+        $this->postAuth(['action' => 'validate_registration_username', 'username' => '@Available'.bin2hex(random_bytes(3))])
+            ->assertOk()->assertJsonPath('data.available', true);
+        $this->postAuth(['action' => 'validate_registration_username', 'username' => 'bad name'])
+            ->assertUnprocessable();
+    }
+
+    public function test_registration_email_availability_preserves_cross_account_email_rule(): void
+    {
+        $existing = $this->createUser();
+        $existing->forceFill(['email' => 'taken@example.com'])->save();
+
+        $this->postAuth([
+            'action' => 'validate_registration_email',
+            'email' => 'TAKEN@example.com',
+            'account_type' => 'individual',
+        ])->assertConflict()->assertJsonPath('error', 'Этот e-mail уже привязан к личному аккаунту.');
+
+        $this->postAuth([
+            'action' => 'validate_registration_email',
+            'email' => 'taken@example.com',
+            'account_type' => 'corporate',
+        ])->assertOk()->assertJsonPath('data.available', true);
+    }
+
+    public function test_corporate_administrator_invitation_is_emailed_and_linked_after_acceptance_and_signup(): void
+    {
+        Mail::fake();
+        $inviteEmail = 'new-admin@example.com';
+        $input = $this->registration([
+            'account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Ромашка',
+        ]);
+        $input['administrators'] = [
+            ['role' => 'owner', 'identifier' => $input['email']],
+            ['role' => 'manager', 'identifier' => $inviteEmail],
+        ];
+
+        $response = $this->postRegistration($input)->assertCreated();
+        $member = DB::table('corporate_account_members')->where('email', $inviteEmail)->first();
+        $this->assertNotNull($member);
+        $this->assertSame('manager', $member->role);
+        $this->assertNull($member->user_id);
+        $this->assertNotNull($member->invitation_token_hash);
+
+        $invitationUrl = null;
+        Mail::assertSent(CorporateAccountInvitation::class, function (CorporateAccountInvitation $mail) use (&$invitationUrl, $inviteEmail): bool {
+            $invitationUrl = $mail->invitationUrl;
+
+            return $mail->hasTo($inviteEmail) && str_contains($mail->invitationUrl, '/pages/corporate-invitation.html?token=');
+        });
+        parse_str((string) parse_url((string) $invitationUrl, PHP_URL_QUERY), $query);
+        $token = $query['token'] ?? '';
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', $token);
+
+        $this->postAuth(['action' => 'accept_corporate_invitation', 'token' => $token])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['registered' => false, 'role' => 'manager']]);
+        $this->assertNotNull(DB::table('corporate_account_members')->where('id', $member->id)->value('accepted_at'));
+
+        $newAdmin = $this->registration([
+            'username' => '@NewAdmin', 'email' => $inviteEmail,
+        ]);
+        $this->postRegistration($newAdmin)->assertCreated();
+        $this->assertSame(User::query()->where('email', $inviteEmail)->value('id'), DB::table('corporate_account_members')->where('id', $member->id)->value('user_id'));
+        $this->assertNull(DB::table('corporate_accounts')->value('created_by_user_id'));
+    }
+
+    public function test_verification_code_is_emailed_and_only_its_hash_is_cached(): void
+    {
+        Mail::fake();
+        $email = ' Verify@Example.com ';
+
+        $response = $this->postAuth(['action' => 'send_verification_code', 'email' => $email])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['sent' => true]]);
+
+        Mail::assertSent(EmailVerificationCode::class, fn (EmailVerificationCode $mail): bool => preg_match('/^[0-9]{6}$/D', $mail->code) === 1);
+        $cacheKey = 'email-verification-code:'.hash('sha256', strtolower(trim($email)));
+        $cachedCode = Cache::get($cacheKey);
+        $this->assertIsArray($cachedCode);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $cachedCode['hash']);
+        $this->assertSame(0, $cachedCode['attempts']);
+        $this->assertStringNotContainsString($cachedCode['hash'], $response->getContent());
+    }
+
+    public function test_local_registration_code_is_fixed_and_does_not_send_email(): void
+    {
+        $this->app['env'] = 'local';
+        Mail::fake();
+        $email = 'local-beta@example.com';
+
+        $this->postAuth(['action' => 'send_verification_code', 'email' => $email])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['sent' => true, 'test_code' => '285868']]);
+        Mail::assertNothingOutgoing();
+
+        $this->postAuth(['action' => 'verify_email_code', 'email' => $email, 'code' => '285868'])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['verified' => true]]);
+        $this->assertSame($email, $this->app['session.store']->get('registration_verified_email'));
+    }
+
+    public function test_verification_code_is_not_sent_to_invalid_email_but_can_be_used_by_a_second_account_type(): void
+    {
+        Mail::fake();
+        $this->postAuth(['action' => 'send_verification_code', 'email' => 'not-an-email'])->assertUnprocessable();
+
+        $user = $this->createUser();
+        $user->forceFill(['email' => 'taken@example.com'])->save();
+        $this->postAuth(['action' => 'send_verification_code', 'email' => 'TAKEN@example.com'])->assertOk();
+
+        Mail::assertSent(EmailVerificationCode::class);
+    }
+
+    public function test_correct_verification_code_is_consumed_and_bound_to_the_session(): void
+    {
+        Mail::fake();
+        $email = 'verify-'.bin2hex(random_bytes(5)).'@example.com';
+        $this->postAuth(['action' => 'send_verification_code', 'email' => $email])->assertOk();
+
+        $code = null;
+        Mail::assertSent(EmailVerificationCode::class, function (EmailVerificationCode $mail) use (&$code): bool {
+            $code = $mail->code;
+
+            return true;
+        });
+        $this->assertIsString($code);
+
+        $this->postAuth(['action' => 'verify_email_code', 'email' => $email, 'code' => $code])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['verified' => true]]);
+        $this->assertSame($email, $this->app['session.store']->get('registration_verified_email'));
+        $this->assertNull(Cache::get('email-verification-code:'.hash('sha256', $email)));
+    }
+
+    public function test_registration_cannot_skip_email_verification(): void
+    {
+        $this->postAuth($this->registration())->assertUnprocessable()
+            ->assertJsonPath('error', 'Сначала подтвердите e-mail.');
+        $this->assertSame(0, User::count());
+        $this->assertGuest();
+    }
+
+    public function test_username_errors_explain_the_specific_problem(): void
+    {
+        $this->postRegistration($this->registration(['username' => '@логин']))
+            ->assertUnprocessable()->assertJsonPath('error', 'Используйте только латинские буквы.');
+        $this->postRegistration($this->registration(['username' => '@1user']))
+            ->assertUnprocessable()->assertJsonPath('error', 'После @ логин должен начинаться с латинской буквы.');
+        $this->postRegistration($this->registration(['username' => '@ab']))
+            ->assertUnprocessable()->assertJsonPath('error', 'Логин вместе с @ должен содержать не менее 4 символов.');
+        $this->postRegistration($this->registration(['username' => '@user.name']))
+            ->assertUnprocessable()->assertJsonPath('error', 'После @ разрешены латинские буквы, цифры, дефис и подчёркивание.');
     }
 
     #[DataProvider('invalidRegistrationFields')]
@@ -90,7 +501,7 @@ class AuthTest extends DatabaseTestCase
         $users = User::count();
         $boards = Board::count();
 
-        $this->postAuth($this->registration($changes))
+        $this->postRegistration($this->registration($changes))
             ->assertUnprocessable()
             ->assertJsonPath('success', false)
             ->assertJsonStructure(['error']);
@@ -103,22 +514,37 @@ class AuthTest extends DatabaseTestCase
     public static function invalidRegistrationFields(): array
     {
         return [
-            'short username' => [['username' => 'ab']],
-            'long username' => [['username' => str_repeat('a', 25)]],
-            'username whitespace not trimmed' => [['username' => ' NewUser ']],
+            'short username' => [['username' => '@a']],
+            'three-character username' => [['username' => '@ab']],
+            'long username' => [['username' => '@'.str_repeat('a', 24)]],
+            'username whitespace not trimmed' => [['username' => ' @NewUser ']],
             'non-string username' => [['username' => ['NewUser']]],
-            'non-latin username' => [['username' => 'Новый']],
+            'non-latin username' => [['username' => '@Новый']],
+            'numeric username' => [['username' => '@12345']],
+            'username starts with symbol' => [['username' => '@-user']],
+            'username symbol not permitted' => [['username' => '@new.name']],
+            'invalid first name' => [['first_name' => 'Имя!']],
+            'invalid last name' => [['last_name' => 'Фамилия_']],
+            'invalid middle name' => [['middle_name' => 'Отчество!']],
+            'personal name digits rejected' => [['first_name' => 'Имя2']],
+            'corporate organization name without letters' => [['account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => '123 №']],
+            'corporate organization name unsupported symbols' => [['account_type' => 'corporate', 'organization_type' => 'ООО', 'organization_name' => 'Ромашка!']],
+            'invalid organization type' => [['account_type' => 'corporate', 'organization_type' => 'АО', 'organization_name' => 'Ромашка']],
             'short password' => [['password' => 'Ab12', 'confirm_password' => 'Ab12']],
             'long password' => [['password' => str_repeat('a', 128).'1', 'confirm_password' => str_repeat('a', 128).'1']],
             'non-string password' => [['password' => ['Password123']]],
-            'no password digit' => [['password' => 'Password', 'confirm_password' => 'Password']],
+            'no password digit' => [['password' => 'Password!', 'confirm_password' => 'Password!']],
             'no password letter' => [['password' => '123456', 'confirm_password' => '123456']],
+            'no lowercase password letter' => [['password' => 'PASSWORD123!', 'confirm_password' => 'PASSWORD123!']],
+            'no uppercase password letter' => [['password' => 'password123!', 'confirm_password' => 'password123!']],
+            'no password symbol' => [['password' => 'Password123', 'confirm_password' => 'Password123']],
             'password whitespace' => [['password' => 'Pass 123', 'confirm_password' => 'Pass 123']],
             'non-ascii password' => [['password' => 'Пароль123', 'confirm_password' => 'Пароль123']],
             'confirmation mismatch' => [['confirm_password' => 'Another123']],
             'confirmation not trimmed' => [['confirm_password' => 'Password123 ']],
             'non-string confirmation' => [['confirm_password' => true]],
             'bad email' => [['email' => 'not-an-email']],
+            'missing email' => [['email' => '']],
             'email whitespace not trimmed' => [['email' => ' person@example.com ']],
             'non-string email' => [['email' => ['person@example.com']]],
             'invalid account type' => [['account_type' => 'admin']],
@@ -131,9 +557,11 @@ class AuthTest extends DatabaseTestCase
         $user = $this->createUser();
         $boards = Board::count();
 
-        $this->postAuth($this->registration(['username' => $user->username]))
+        $user->username = '@'.$user->username;
+        $user->save();
+        $this->postRegistration($this->registration(['username' => $user->username]))
             ->assertConflict()
-            ->assertExactJson(['success' => false, 'error' => 'Логин или e-mail уже используется.']);
+            ->assertExactJson(['success' => false, 'error' => 'Этот логин уже используется личным аккаунтом.']);
 
         $this->assertSame($boards, Board::count());
         $this->assertGuest();
@@ -144,30 +572,30 @@ class AuthTest extends DatabaseTestCase
         $user = $this->createUser();
         $user->update(['email' => 'person@example.com']);
 
-        $this->postAuth($this->registration(['email' => 'PERSON@EXAMPLE.COM']))->assertConflict();
-        $this->assertFalse(User::where('username', 'NewUser')->exists());
+        $this->postRegistration($this->registration(['email' => 'PERSON@EXAMPLE.COM']))->assertConflict();
+        $this->assertFalse(User::where('username', '@NewUser')->exists());
     }
 
     public function test_failure_to_create_the_default_board_rolls_back_the_user(): void
     {
         Board::creating(fn () => throw new RuntimeException('Private board creation error'));
 
-        $this->postAuth($this->registration())
+        $this->postRegistration($this->registration())
             ->assertStatus(500)
             ->assertExactJson(['success' => false, 'error' => 'Не удалось выполнить запрос. Попробуйте позже.']);
 
-        $this->assertFalse(User::where('username', 'NewUser')->exists());
+        $this->assertFalse(User::where('username', '@NewUser')->exists());
         $this->getAuth()->assertJsonPath('data.user', null);
     }
 
     public function test_a_128_character_password_is_not_truncated_at_72_bytes(): void
     {
-        $password = str_repeat('a', 127).'1';
-        $response = $this->postAuth($this->registration(['password' => $password, 'confirm_password' => $password]))->assertCreated();
+        $password = str_repeat('a', 124).'Aa1!';
+        $response = $this->postRegistration($this->registration(['password' => $password, 'confirm_password' => $password]))->assertCreated();
         $user = User::findOrFail($response->json('data.user.id'));
 
         $this->assertTrue(Hash::check($password, $user->getAuthPassword()));
-        $this->assertFalse(Hash::check(str_repeat('a', 127).'2', $user->getAuthPassword()));
+        $this->assertFalse(Hash::check(str_repeat('a', 124).'Aa2!', $user->getAuthPassword()));
 
         $this->postAuth(['action' => 'logout'])->assertOk();
         $this->postAuth(['action' => 'login', 'username' => $user->username, 'password' => $password])->assertOk();
@@ -175,8 +603,8 @@ class AuthTest extends DatabaseTestCase
 
     public function test_a_password_that_looks_like_a_hash_is_hashed_as_plain_input(): void
     {
-        $password = password_hash('SomeOther123', PASSWORD_BCRYPT, ['cost' => 4]);
-        $response = $this->postAuth($this->registration(['password' => $password, 'confirm_password' => $password]))->assertCreated();
+        $password = 'A!'.password_hash('SomeOther123', PASSWORD_BCRYPT, ['cost' => 4]);
+        $response = $this->postRegistration($this->registration(['password' => $password, 'confirm_password' => $password]))->assertCreated();
         $stored = User::findOrFail($response->json('data.user.id'))->getAuthPassword();
 
         $this->assertNotSame($password, $stored);
@@ -194,7 +622,7 @@ class AuthTest extends DatabaseTestCase
         $this->postAuth(['action' => 'login', 'username' => 'OldUser', 'password' => 'OldPassword123'])
             ->assertOk()->assertExactJson([
                 'success' => true,
-                'data' => ['user' => ['id' => $id, 'username' => 'OldUser', 'account_type' => 'individual']],
+                'data' => ['user' => ['id' => $id, 'username' => 'OldUser', 'account_type' => 'individual'], 'corporate_account' => null],
             ]);
 
         $this->assertSame($hash, DB::table('users')->where('id', $id)->value('password_hash'));
@@ -374,9 +802,21 @@ class AuthTest extends DatabaseTestCase
     private function registration(array $changes = []): array
     {
         return array_replace([
-            'action' => 'register', 'username' => 'NewUser',
-            'password' => 'Password123', 'confirm_password' => 'Password123',
+            'action' => 'register', 'username' => '@NewUser', 'first_name' => 'Имя', 'last_name' => 'Фамилия',
+            'email' => 'new-'.bin2hex(random_bytes(6)).'@example.com',
+            'password' => 'Password123!', 'confirm_password' => 'Password123!',
+            'personal_data_consent' => true, 'marketing_consent' => false,
         ], $changes);
+    }
+
+    private function postRegistration(array $input): TestResponse
+    {
+        $email = $input['email'] ?? null;
+        if (is_string($email) && filter_var(trim($email), FILTER_VALIDATE_EMAIL) !== false) {
+            $this->withSession(['registration_verified_email' => strtolower(trim($email))]);
+        }
+
+        return $this->postAuth($input);
     }
 
     private function getAuth(): TestResponse

@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Mail\CorporateAccountInvitation;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class WorkspaceController
 {
@@ -37,6 +40,8 @@ class WorkspaceController
                     'update_board' => $this->saveBoard($input, $userId, true),
                     'create_list' => $this->saveList($input, $userId, false),
                     'update_list' => $this->saveList($input, $userId, true),
+                    'create_flag' => $this->createFlag($input, $userId),
+                    'invite_member' => $this->inviteMember($input, $userId),
                     'create_task', 'update_task', 'toggle_task', 'reorder_task' => $this->saveTask($input, $userId),
                     default => $this->fail(400, 'Unknown action'),
                 };
@@ -51,8 +56,15 @@ class WorkspaceController
 
     private function read(Request $request, int $userId): JsonResponse
     {
-        $boards = DB::table('boards')->where('user_id', $userId)
-            ->orderByDesc('is_default')->orderBy('id')->get(['id', 'name', 'description', 'board_type']);
+        $corporateAccountIds = $this->corporateAccountIds($userId);
+        $boards = DB::table('boards')->where(function ($query) use ($userId, $corporateAccountIds): void {
+            $query->where('user_id', $userId);
+            if ($corporateAccountIds !== []) {
+                $query->orWhereIn('corporate_account_id', $corporateAccountIds);
+            }
+        })->orderByRaw('CASE WHEN corporate_account_id IS NOT NULL THEN 0 ELSE 1 END')
+            ->orderByDesc('is_default')->orderBy('id')
+            ->get(['id', 'user_id', 'corporate_account_id', 'name', 'description', 'board_type']);
         if ($boards->isEmpty()) {
             $this->fail(404, 'Рабочая доска не найдена.');
         }
@@ -61,17 +73,17 @@ class WorkspaceController
         if ($search !== '' && (mb_strlen($search) > 120 || preg_match('/[\x00-\x1F\x7F]/u', $search))) {
             $this->fail(422, 'Поисковый запрос слишком длинный или содержит недопустимые символы.');
         }
+        $boardIds = $boards->pluck('id')->map(fn ($id) => (int) $id)->all();
         $lists = DB::table('task_lists as lists')->leftJoin('user_flags as flags', function ($join): void {
             $join->on('flags.id', '=', 'lists.flag_id')->on('flags.user_id', '=', 'lists.user_id')
                 ->on('flags.board_id', '=', 'lists.board_id');
-        })->where('lists.user_id', $userId)->select([
+        })->whereIn('lists.board_id', $boardIds)->select([
             'lists.id', 'lists.board_id', 'lists.name', 'lists.description', 'lists.created_at',
             'lists.is_important', 'lists.theme', 'lists.flag_id', 'flags.name as flag_name', 'flags.color as flag_color',
         ]);
         if ($search !== '') {
-            $found = $lists->join('boards', function ($join): void {
-                $join->on('boards.id', '=', 'lists.board_id')->on('boards.user_id', '=', 'lists.user_id');
-            })->addSelect('boards.name as board_name')
+            $found = $lists->join('boards', 'boards.id', '=', 'lists.board_id')
+                ->addSelect('boards.name as board_name')
                 // POSITION is a literal substring search: % and _ must not become LIKE wildcards.
                 ->where(function ($query) use ($search): void {
                     $query->whereRaw('POSITION(LOWER(?) IN LOWER(lists.name)) > 0', [$search])
@@ -82,9 +94,9 @@ class WorkspaceController
                                 ->whereRaw('POSITION(LOWER(?) IN LOWER(tasks.title)) > 0', [$search]);
                         });
                 })->orderBy('boards.name')->orderByDesc('lists.created_at')->orderByDesc('lists.id')->get();
-            $tasks = DB::table('tasks')->where('user_id', $userId)->whereIn('list_id', $found->pluck('id'))
+            $tasks = DB::table('tasks')->whereIn('list_id', $found->pluck('id'))
                 ->orderBy('sort_order')->orderBy('id')->get(['id', 'list_id', 'title', 'is_completed'])->groupBy('list_id');
-            $flags = DB::table('user_flags')->where('user_id', $userId)->orderBy('name')
+            $flags = DB::table('user_flags')->whereIn('board_id', $boardIds)->orderBy('name')
                 ->get(['id', 'board_id', 'name', 'color'])->groupBy('board_id');
 
             return $this->success(['results' => $found->map(function ($list) use ($tasks, $flags): array {
@@ -104,16 +116,23 @@ class WorkspaceController
                 $this->fail(404, 'Рабочая доска не найдена.');
             }
         }
-        $flags = DB::table('user_flags')->where('user_id', $userId)->where('board_id', $board->id)
+        $boardOwnerId = (int) $board->user_id;
+        $flags = DB::table('user_flags')->where('user_id', $boardOwnerId)->where('board_id', $board->id)
             ->orderBy('name')->get(['id', 'board_id', 'name', 'color']);
         $tasks = DB::table('tasks')->join('task_lists', 'task_lists.id', '=', 'tasks.list_id')
-            ->where('tasks.user_id', $userId)->where('task_lists.user_id', $userId)->where('task_lists.board_id', $board->id)
+            ->where('tasks.user_id', $boardOwnerId)->where('task_lists.user_id', $boardOwnerId)->where('task_lists.board_id', $board->id)
             ->orderBy('tasks.list_id')->orderBy('tasks.sort_order')->orderBy('tasks.id')
             ->get(['tasks.id', 'tasks.list_id', 'tasks.title', 'tasks.is_completed']);
 
         return $this->success([
             'board' => $this->boardData($board),
             'boards' => $boards->map(fn ($item) => $this->boardData($item))->all(),
+            'corporate_accounts' => DB::table('corporate_account_members as members')
+                ->join('corporate_accounts as accounts', 'accounts.id', '=', 'members.corporate_account_id')
+                ->where('members.user_id', $userId)->whereNotNull('members.accepted_at')
+                ->orderBy('accounts.organization_name')
+                ->get(['accounts.id', 'accounts.organization_name as name', 'members.role'])
+                ->map(fn ($account) => ['id' => (int) $account->id, 'name' => $account->name, 'role' => $account->role])->all(),
             'flags' => $flags->map(fn ($flag) => $this->flagData($flag, true))->all(),
             'lists' => $lists->where('lists.board_id', $board->id)->orderBy('lists.created_at')->orderBy('lists.id')
                 ->get()->map(fn ($list) => $this->listData($list))->all(),
@@ -132,16 +151,48 @@ class WorkspaceController
             || !is_string($description) || mb_strlen($description) > 2000 || !in_array($type, self::BOARD_TYPES, true)) {
             $this->fail(422, 'Проверьте название, описание и тип доски.');
         }
+        $corporateAccountId = $this->id($input['corporate_account_id'] ?? null);
         $fields = ['name' => trim($name), 'description' => trim($description), 'board_type' => $type];
         if ($update) {
-            if (!DB::table('boards')->where('id', $id)->where('user_id', $userId)->update($fields)) {
+            $board = $this->accessibleBoard((int) $id, $userId);
+            if ($board === null) {
                 $this->fail(404, 'Доска не найдена.');
             }
+            if ($board->corporate_account_id !== null) {
+                $this->requireCorporateOwner((int) $board->corporate_account_id, $userId);
+                if ($type !== 'corporate') {
+                    $this->fail(422, 'Тип доски организации нельзя изменить.');
+                }
+            } elseif ($type === 'corporate') {
+                $this->fail(422, 'Нельзя преобразовать личную доску в корпоративную.');
+            }
+            DB::table('boards')->where('id', $id)->update($fields);
         } else {
-            $id = DB::table('boards')->insertGetId($fields + ['user_id' => $userId]);
+            $boardOwnerId = $userId;
+            if ($type === 'corporate') {
+                if ($corporateAccountId === false) {
+                    $this->fail(422, 'Выберите организацию для корпоративной доски.');
+                }
+                $this->requireCorporateOwner($corporateAccountId, $userId);
+                $boardOwnerId = (int) DB::table('corporate_account_members')->where('corporate_account_id', $corporateAccountId)
+                    ->where('user_id', $userId)->value('user_id');
+            }
+            $id = DB::table('boards')->insertGetId($fields + [
+                'user_id' => $boardOwnerId,
+                'corporate_account_id' => $type === 'corporate' ? $corporateAccountId : null,
+            ]);
+            DB::table('task_lists')->insert([
+                'user_id' => $boardOwnerId,
+                'board_id' => $id,
+                'name' => '👋 Hello World!',
+                'description' => 'Это ваш первый список',
+            ]);
         }
 
-        return $this->success(['board' => ['id' => $id] + $fields], $update ? 200 : 201);
+        return $this->success(['board' => ['id' => $id] + $fields + [
+            'corporate_account_id' => $update ? ($board->corporate_account_id === null ? null : (int) $board->corporate_account_id)
+                : ($type === 'corporate' ? $corporateAccountId : null),
+        ]], $update ? 200 : 201);
     }
 
     private function saveList(array $input, int $userId, bool $update): JsonResponse
@@ -185,23 +236,33 @@ class WorkspaceController
             $this->fail(422, 'Выберите существующий флаг или создайте новый.');
         }
         $previous = null;
+        $boardOwnerId = $userId;
         if ($update) {
-            $previous = DB::table('task_lists')->where('id', $id)->where('user_id', $userId)->first();
+            $previous = DB::table('task_lists')->where('id', $id)->first();
             if ($previous === null) {
                 $this->fail(404, 'Список не найден.');
             }
             $boardId = (int) $previous->board_id;
-        } elseif (!DB::table('boards')->where('id', $boardId)->where('user_id', $userId)->exists()) {
-            $this->fail(404, 'Рабочая доска не найдена.');
+            $board = $this->accessibleBoard($boardId, $userId);
+            if ($board === null) {
+                $this->fail(404, 'Список не найден.');
+            }
+            $boardOwnerId = (int) $board->user_id;
+        } else {
+            $board = $this->accessibleBoard((int) $boardId, $userId);
+            if ($board === null) {
+                $this->fail(404, 'Рабочая доска не найдена.');
+            }
+            $boardOwnerId = (int) $board->user_id;
         }
         if ($newFlag !== '') {
-            $flagId = DB::table('user_flags')->insertGetId(['user_id' => $userId, 'board_id' => $boardId, 'name' => $newFlag]);
+            $flagId = DB::table('user_flags')->insertGetId(['user_id' => $boardOwnerId, 'board_id' => $boardId, 'name' => $newFlag]);
         } elseif ($flagId !== null) {
             $flagId = $this->id($flagId);
             if ($flagId === false) {
                 $this->fail(422, 'Проверьте выбранный флаг.');
             }
-            if (!DB::table('user_flags')->where('id', $flagId)->where('user_id', $userId)->where('board_id', $boardId)->exists()) {
+            if (!DB::table('user_flags')->where('id', $flagId)->where('user_id', $boardOwnerId)->where('board_id', $boardId)->exists()) {
                 $this->fail(404, 'Флаг не найден.');
             }
         }
@@ -209,21 +270,100 @@ class WorkspaceController
         $fields = ['name' => trim($name), 'description' => $update ? trim($description) : '',
             'theme' => $theme, 'flag_id' => $flagId, 'is_important' => $important];
         if ($update) {
-            DB::table('task_lists')->where('id', $id)->where('user_id', $userId)->update($fields);
+            DB::table('task_lists')->where('id', $id)->where('user_id', $boardOwnerId)->update($fields);
             if ($previous->flag_id !== null && (int) $previous->flag_id !== $flagId) {
-                $this->deleteUnusedFlag((int) $previous->flag_id, $boardId, $userId);
+                $this->deleteUnusedFlag((int) $previous->flag_id, $boardId, $boardOwnerId);
             }
         } else {
-            $id = DB::table('task_lists')->insertGetId($fields + ['user_id' => $userId, 'board_id' => $boardId]);
+            $id = DB::table('task_lists')->insertGetId($fields + ['user_id' => $boardOwnerId, 'board_id' => $boardId]);
         }
         $flag = $flagId === null ? null : DB::table('user_flags')->where('id', $flagId)
-            ->where('user_id', $userId)->where('board_id', $boardId)->first(['id', 'board_id', 'name', 'color']);
+            ->where('user_id', $boardOwnerId)->where('board_id', $boardId)->first(['id', 'board_id', 'name', 'color']);
         if ($update) {
             return $this->success(['updated' => true, 'flag' => $flag === null ? null : $this->flagData($flag, true)]);
         }
 
         return $this->success(['list' => ['id' => $id, 'name' => $fields['name'], 'is_important' => $important,
             'theme' => $theme, 'flag' => $flag === null ? null : $this->flagData($flag, false)]], 201);
+    }
+
+    private function createFlag(array $input, int $userId): JsonResponse
+    {
+        $boardId = $this->id($input['board_id'] ?? null);
+        $name = $input['name'] ?? null;
+        if ($boardId === false || !is_string($name) || trim($name) === ''
+            || mb_strlen(trim($name)) > 40 || preg_match('/[\x00-\x1F\x7F]/u', $name)) {
+            $this->fail(422, 'Проверьте название флага.');
+        }
+        $board = $boardId === false ? null : $this->accessibleBoard($boardId, $userId);
+        if ($board === null) {
+            $this->fail(404, 'Рабочая доска не найдена.');
+        }
+        $boardOwnerId = (int) $board->user_id;
+
+        $id = DB::table('user_flags')->insertGetId([
+            'user_id' => $boardOwnerId,
+            'board_id' => $boardId,
+            'name' => trim($name),
+        ]);
+        $flag = DB::table('user_flags')->where('id', $id)->first(['id', 'board_id', 'name', 'color']);
+
+        return $this->success(['flag' => $this->flagData($flag, true)], 201);
+    }
+
+    private function inviteMember(array $input, int $userId): JsonResponse
+    {
+        $corporateAccountId = $this->id($input['corporate_account_id'] ?? null);
+        $identifier = $input['identifier'] ?? null;
+        $role = $input['role'] ?? null;
+        if ($corporateAccountId === false || !is_string($identifier) || $identifier === ''
+            || $identifier !== trim($identifier) || strlen($identifier) > 254
+            || !is_string($role) || !in_array($role, ['admin', 'manager', 'support'], true)) {
+            $this->fail(422, 'Проверьте контакт и роль участника.');
+        }
+        $this->requireCorporateOwner($corporateAccountId, $userId);
+
+        if (filter_var($identifier, FILTER_VALIDATE_EMAIL) !== false) {
+            $email = strtolower($identifier);
+        } elseif (preg_match('/^@[A-Za-z][A-Za-z0-9_-]{2,23}$/D', $identifier) === 1) {
+            $invitee = DB::table('users')->whereRaw('LOWER(username) = ?', [strtolower($identifier)])->first(['email']);
+            if ($invitee === null || !is_string($invitee->email) || filter_var($invitee->email, FILTER_VALIDATE_EMAIL) === false) {
+                $this->fail(422, 'По этому логину не найден пользователь с e-mail. Укажите адрес почты для приглашения.');
+            }
+            $email = strtolower($invitee->email);
+        } else {
+            $this->fail(422, 'Введите корректный e-mail или зарегистрированный логин участника.');
+        }
+
+        if (DB::table('corporate_account_members')->where('corporate_account_id', $corporateAccountId)
+            ->whereRaw('LOWER(email) = ?', [$email])->exists()) {
+            $this->fail(409, 'Этот пользователь уже добавлен или приглашён.');
+        }
+
+        $token = bin2hex(random_bytes(32));
+        DB::table('corporate_account_members')->insert([
+            'corporate_account_id' => $corporateAccountId,
+            'email' => $email,
+            'role' => $role,
+            'invitation_token_hash' => hash('sha256', $token),
+            'invitation_expires_at' => now()->addDays(7),
+        ]);
+
+        $account = DB::table('corporate_accounts')->where('id', $corporateAccountId)->first(['organization_type', 'organization_name']);
+        $accountName = (string) ($account->organization_name ?? '');
+        $invitationUrl = rtrim((string) config('app.frontend_url'), '/').'/pages/corporate-invitation.html?token='.$token;
+        $sent = true;
+        try {
+            Mail::to($email)->send(new CorporateAccountInvitation((string) ($account->organization_type ?? ''), $accountName, $role, $invitationUrl));
+        } catch (\Throwable $exception) {
+            Log::warning('Corporate account invitation email could not be sent.', [
+                'recipient_hash' => hash('sha256', $email),
+                'exception' => $exception::class,
+            ]);
+            $sent = false;
+        }
+
+        return $this->success(['invited' => true, 'email_sent' => $sent], 201);
     }
 
     private function saveTask(array $input, int $userId): JsonResponse
@@ -241,22 +381,27 @@ class WorkspaceController
             $this->fail(422, 'Некорректная задача.');
         }
         if ($action === 'create_task') {
-            if (!DB::table('task_lists')->where('id', $id)->where('user_id', $userId)->exists()) {
+            $list = DB::table('task_lists')->where('id', $id)->first();
+            $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId);
+            if ($list === null || $board === null) {
                 $this->fail(404, 'Список не найден.');
             }
-            $maximum = DB::table('tasks')->where('list_id', $id)->max('sort_order');
-            $taskId = DB::table('tasks')->insertGetId(['user_id' => $userId, 'list_id' => $id,
+            $boardOwnerId = (int) $board->user_id;
+            $maximum = DB::table('tasks')->where('user_id', $boardOwnerId)->where('list_id', $id)->max('sort_order');
+            $taskId = DB::table('tasks')->insertGetId(['user_id' => $boardOwnerId, 'list_id' => $id,
                 'title' => trim($title), 'sort_order' => $maximum === null ? 0 : $maximum + 1]);
 
             return $this->success(['task' => ['id' => $taskId, 'list_id' => $id, 'title' => trim($title), 'is_completed' => false]], 201);
         }
-        $task = DB::table('tasks')->where('id', $id)->where('user_id', $userId)->first();
-        // tasks has only a single-column list FK; also check the list owner to reject inconsistent legacy rows.
-        if ($task === null || !DB::table('task_lists')->where('id', $task->list_id)->where('user_id', $userId)->exists()) {
+        $task = DB::table('tasks')->where('id', $id)->first();
+        $list = $task === null ? null : DB::table('task_lists')->where('id', $task->list_id)->where('user_id', $task->user_id)->first();
+        $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId);
+        if ($task === null || $list === null || $board === null || (int) $task->user_id !== (int) $board->user_id) {
             $this->fail(404, 'Задача не найдена.');
         }
+        $boardOwnerId = (int) $board->user_id;
         if ($action === 'reorder_task') {
-            $ids = DB::table('tasks')->where('list_id', $task->list_id)->where('user_id', $userId)
+            $ids = DB::table('tasks')->where('list_id', $task->list_id)->where('user_id', $boardOwnerId)
                 ->orderBy('sort_order')->orderBy('id')->lockForUpdate()->pluck('id')->map(fn ($value) => (int) $value)->all();
             $source = array_search($id, $ids, true);
             $target = array_search($this->id($input['target_task_id']), $ids, true);
@@ -267,11 +412,11 @@ class WorkspaceController
                 $moving = array_splice($ids, $source, 1)[0];
                 array_splice($ids, $target, 0, [$moving]);
                 foreach ($ids as $position => $orderedId) {
-                    DB::table('tasks')->where('id', $orderedId)->where('user_id', $userId)->update(['sort_order' => $position]);
+                    DB::table('tasks')->where('id', $orderedId)->where('user_id', $boardOwnerId)->update(['sort_order' => $position]);
                 }
             }
         } else {
-            DB::table('tasks')->where('id', $id)->where('user_id', $userId)->update($action === 'toggle_task'
+            DB::table('tasks')->where('id', $id)->where('user_id', $boardOwnerId)->update($action === 'toggle_task'
                 ? ['is_completed' => $input['is_completed']] : ['title' => trim($title)]);
         }
 
@@ -285,18 +430,33 @@ class WorkspaceController
             if ($id === false) {
                 $this->fail(422, 'Некорректная доска.');
             }
-            $board = DB::table('boards')->where('id', $id)->where('user_id', $userId)->lockForUpdate()->first();
+            $board = $this->accessibleBoard((int) $id, $userId, true);
             if ($board === null) {
                 $this->fail(404, 'Доска не найдена.');
             }
-            if (DB::table('boards')->where('user_id', $userId)->count() <= 1) {
+            if ($board->corporate_account_id !== null) {
+                $this->requireCorporateOwner((int) $board->corporate_account_id, $userId);
+            }
+            $scope = DB::table('boards');
+            if ($board->corporate_account_id !== null) {
+                $scope->where('corporate_account_id', $board->corporate_account_id);
+            } else {
+                $scope->where('user_id', $userId)->whereNull('corporate_account_id');
+            }
+            if ($scope->count() <= 1) {
                 $this->fail(409, 'Нельзя удалить последнюю доску.');
             }
-            $replacement = (int) DB::table('boards')->where('user_id', $userId)->where('id', '<>', $id)
+            $replacementQuery = DB::table('boards')->where('id', '<>', $id);
+            if ($board->corporate_account_id !== null) {
+                $replacementQuery->where('corporate_account_id', $board->corporate_account_id);
+            } else {
+                $replacementQuery->where('user_id', $userId)->whereNull('corporate_account_id');
+            }
+            $replacement = (int) $replacementQuery
                 ->orderByDesc('is_default')->orderBy('created_at')->orderBy('id')->value('id');
-            DB::table('boards')->where('id', $id)->where('user_id', $userId)->delete();
+            DB::table('boards')->where('id', $id)->delete();
             if ($board->is_default) {
-                DB::table('boards')->where('id', $replacement)->where('user_id', $userId)->update(['is_default' => true]);
+                DB::table('boards')->where('id', $replacement)->update(['is_default' => true]);
             }
 
             return $this->success(['deleted' => true, 'replacement_board_id' => $replacement]);
@@ -305,13 +465,15 @@ class WorkspaceController
         if ($id === false) {
             $this->fail(422, 'Некорректный список.');
         }
-        $list = DB::table('task_lists')->where('id', $id)->where('user_id', $userId)->first();
-        if ($list === null) {
+        $list = DB::table('task_lists')->where('id', $id)->first();
+        $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId);
+        if ($list === null || $board === null || (int) $list->user_id !== (int) $board->user_id) {
             $this->fail(404, 'Список не найден.');
         }
-        DB::table('task_lists')->where('id', $id)->where('user_id', $userId)->delete();
+        $boardOwnerId = (int) $board->user_id;
+        DB::table('task_lists')->where('id', $id)->where('user_id', $boardOwnerId)->delete();
         if ($list->flag_id !== null) {
-            $this->deleteUnusedFlag((int) $list->flag_id, (int) $list->board_id, $userId);
+            $this->deleteUnusedFlag((int) $list->flag_id, (int) $list->board_id, $boardOwnerId);
         }
 
         return $this->success(['deleted' => true]);
@@ -324,6 +486,40 @@ class WorkspaceController
             ->delete();
     }
 
+    /** @return list<int> */
+    private function corporateAccountIds(int $userId): array
+    {
+        return DB::table('corporate_account_members')->where('user_id', $userId)
+            ->whereNotNull('accepted_at')->pluck('corporate_account_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    private function accessibleBoard(int $boardId, int $userId, bool $lock = false): ?object
+    {
+        $board = DB::table('boards')->where('id', $boardId)->first();
+        if ($board === null) {
+            return null;
+        }
+        if ((int) $board->user_id === $userId && $board->corporate_account_id === null) {
+            return $lock ? DB::table('boards')->where('id', $boardId)->lockForUpdate()->first() : $board;
+        }
+        if ($board->corporate_account_id === null || !DB::table('corporate_account_members')
+            ->where('corporate_account_id', $board->corporate_account_id)->where('user_id', $userId)
+            ->whereNotNull('accepted_at')->exists()) {
+            return null;
+        }
+
+        return $lock ? DB::table('boards')->where('id', $boardId)->lockForUpdate()->first() : $board;
+    }
+
+    private function requireCorporateOwner(int $corporateAccountId, int $userId): void
+    {
+        $isOwner = DB::table('corporate_account_members')->where('corporate_account_id', $corporateAccountId)
+            ->where('user_id', $userId)->where('role', 'owner')->whereNotNull('accepted_at')->exists();
+        if (!$isOwner) {
+            $this->fail(403, 'Только owner может управлять досками организации и приглашать участников.');
+        }
+    }
+
     private function id(mixed $value): int|false
     {
         return filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -331,7 +527,8 @@ class WorkspaceController
 
     private function boardData(object $board): array
     {
-        return ['id' => (int) $board->id, 'name' => $board->name, 'description' => $board->description, 'board_type' => $board->board_type];
+        return ['id' => (int) $board->id, 'name' => $board->name, 'description' => $board->description,
+            'board_type' => $board->board_type, 'corporate_account_id' => isset($board->corporate_account_id) ? (int) $board->corporate_account_id : null];
     }
 
     private function taskData(object $task): array

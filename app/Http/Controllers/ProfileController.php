@@ -28,6 +28,10 @@ class ProfileController
 
     private function update(int $userId, #[\SensitiveParameter] array $input): JsonResponse
     {
+        $storedPreferences = DB::table('users')->where('id', $userId)->first(['github_url', 'telegram_url', 'preferred_theme']);
+        $input['github_url'] ??= $storedPreferences?->github_url ?? '';
+        $input['telegram_url'] ??= $storedPreferences?->telegram_url ?? '';
+        $input['preferred_theme'] ??= $storedPreferences?->preferred_theme ?? 'system';
         foreach (['email', 'secondary_email', 'about', 'current_password', 'new_password', 'confirm_password'] as $field) {
             $input[$field] = $input[$field] ?? '';
         }
@@ -36,10 +40,23 @@ class ProfileController
         }
 
         $data = Validator::make($input, [
-            'username' => ['bail', 'required', 'string', 'regex:/^[A-Za-z][A-Za-z0-9_]{2,23}$/D'],
+            'username' => ['bail', 'required', 'string', 'regex:/^(?:[A-Za-z][A-Za-z0-9_@-]{3,23}|@[A-Za-z][A-Za-z0-9_-]{2,22})$/D'],
             'email' => ['string'],
             'secondary_email' => ['string'],
             'about' => ['bail', 'string', 'max:1200'],
+            'github_url' => ['bail', 'nullable', 'string', 'max:255', function (string $attribute, mixed $value, \Closure $fail): void {
+                if ($value !== null && $value !== '' && (!is_string($value)
+                    || preg_match('~^https://github\.com/[A-Za-z0-9-]{1,39}/?$~iD', $value) !== 1)) {
+                    $fail('Укажите ссылку вида https://github.com/username.');
+                }
+            }],
+            'telegram_url' => ['bail', 'nullable', 'string', 'max:255', function (string $attribute, mixed $value, \Closure $fail): void {
+                if ($value !== null && $value !== '' && (!is_string($value)
+                    || preg_match('~^https://t\.me/[A-Za-z0-9_]{5,32}/?$~iD', $value) !== 1)) {
+                    $fail('Укажите ссылку вида https://t.me/username.');
+                }
+            }],
+            'preferred_theme' => ['bail', 'required', 'string', Rule::in(['light', 'dark', 'system'])],
             'account_type' => ['bail', 'required', 'string', Rule::in(['individual', 'team', 'corporate'])],
         ], ['*' => 'Проверьте логин и остальные данные профиля.'])
             ->stopOnFirstFailure()->validate();
@@ -107,6 +124,9 @@ class ProfileController
                     'email' => $data['email'] === '' ? null : $data['email'],
                     'secondary_email' => $data['secondary_email'] === '' ? null : $data['secondary_email'],
                     'about' => trim($data['about']),
+                    'github_url' => trim((string) $data['github_url']) === '' ? null : trim((string) $data['github_url']),
+                    'telegram_url' => trim((string) $data['telegram_url']) === '' ? null : trim((string) $data['telegram_url']),
+                    'preferred_theme' => $data['preferred_theme'],
                     'account_type' => $data['account_type'],
                 ];
                 if ($usernameChanged) {
@@ -172,7 +192,7 @@ class ProfileController
     private function readProfile(int $userId): array
     {
         $user = User::query()->select([
-            'id', 'username', 'email', 'secondary_email', 'account_type', 'about', 'username_changed_at', 'avatar_mime',
+            'id', 'username', 'email', 'secondary_email', 'account_type', 'about', 'github_url', 'telegram_url', 'preferred_theme', 'username_changed_at', 'avatar_mime',
         ])->selectRaw("username_changed_at + INTERVAL '24 hours' AS username_change_available_at")
             ->selectRaw("encode(avatar_data, 'base64') AS avatar_base64")
             ->whereKey($userId)->first();
@@ -192,6 +212,9 @@ class ProfileController
             'secondary_email' => $user->secondary_email,
             'account_type' => $user->account_type,
             'about' => $user->about,
+            'github_url' => $user->github_url,
+            'telegram_url' => $user->telegram_url,
+            'preferred_theme' => $user->preferred_theme,
             'username_changed_at' => $user->getRawOriginal('username_changed_at'),
             'username_change_available_at' => $user->getRawOriginal('username_change_available_at'),
             'avatar' => $avatar,

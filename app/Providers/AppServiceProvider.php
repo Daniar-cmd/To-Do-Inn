@@ -35,6 +35,29 @@ class AppServiceProvider extends ServiceProvider
                 $limits[] = Limit::perDay(20)->by('register-day:'.$ip);
             }
 
+            if ($action === 'validate_corporate_admin_identifier') {
+                $limits[] = Limit::perMinute(20)->by('corporate-admin-identifier-ip:'.$ip);
+            }
+
+            if ($action === 'send_verification_code') {
+                $email = $request->json('email');
+                $email = is_string($email) ? strtolower(trim($email)) : '';
+                $limits[] = Limit::perHour(20)->by('email-code-ip:'.$ip);
+                if ($email !== '') {
+                    $limits[] = Limit::perMinute(1)->by('email-code-cooldown:'.hash('sha256', $email));
+                    $limits[] = Limit::perHour(10)->by('email-code-address:'.hash('sha256', $email));
+                }
+            }
+
+            if ($action === 'verify_email_code') {
+                $email = $request->json('email');
+                $email = is_string($email) ? strtolower(trim($email)) : '';
+                $limits[] = Limit::perMinute(10)->by('verify-email-code-ip:'.$ip);
+                if ($email !== '') {
+                    $limits[] = Limit::perHour(10)->by('verify-email-code-address:'.hash('sha256', $email));
+                }
+            }
+
             return $limits;
         });
 

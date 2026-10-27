@@ -8,6 +8,8 @@ const routes = {
   '/pages/register.html': 'register',
   '/pages/forgot-password.html': 'recovery',
   '/pages/registration-success.html': 'registration-success',
+  '/pages/corporate-invitation.html': 'corporate-invitation',
+  '/pages/organization-root.html': 'organization-root',
   '/pages/workspace.html': 'workspace',
 };
 
@@ -19,10 +21,14 @@ export function App() {
     if (route === 'workspace') return;
 
     getSession()
-      .then(({ user }) => {
-        if (user && route !== 'registration-success') {
+      .then(({ user, corporate_account: corporateAccount }) => {
+        if (corporateAccount && route !== 'organization-root') {
+          window.location.replace('/pages/organization-root.html');
+        } else if (route === 'organization-root' && !corporateAccount) {
+          window.location.replace('/');
+        } else if (user && route !== 'registration-success' && route !== 'corporate-invitation') {
           window.location.replace('/pages/workspace.html');
-        } else if (route === 'registration-success' && !user) {
+        } else if (route === 'registration-success' && !user && !new URLSearchParams(window.location.search).has('corporate')) {
           window.location.replace('/');
         } else {
           setRedirecting(false);
@@ -37,6 +43,8 @@ export function App() {
       register: 'Регистрация — To Do Inn!',
       recovery: 'Восстановление пароля — To Do Inn!',
       'registration-success': 'Регистрация — To Do Inn!',
+      'corporate-invitation': 'Приглашение — To Do Inn!',
+      'organization-root': 'Организация — To Do Inn!',
       workspace: 'Рабочее пространство — To Do Inn!',
     };
     document.title = titles[route] || titles.login;

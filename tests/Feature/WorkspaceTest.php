@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -32,8 +33,9 @@ class WorkspaceTest extends DatabaseTestCase
     public function test_empty_workspace_preserves_the_exact_json_contract(): void
     {
         $this->request()->assertOk()->assertExactJson(['success' => true, 'data' => [
-            'board' => ['id' => $this->board, 'name' => 'Default', 'description' => '', 'board_type' => 'personal'],
-            'boards' => [['id' => $this->board, 'name' => 'Default', 'description' => '', 'board_type' => 'personal']],
+            'board' => ['id' => $this->board, 'name' => 'Default', 'description' => '', 'board_type' => 'personal', 'corporate_account_id' => null],
+            'boards' => [['id' => $this->board, 'name' => 'Default', 'description' => '', 'board_type' => 'personal', 'corporate_account_id' => null]],
+            'corporate_accounts' => [],
             'flags' => [], 'lists' => [], 'tasks' => [],
         ]])->assertHeader('Cache-Control', 'no-store, private')->assertHeader('X-Content-Type-Options', 'nosniff');
     }
@@ -51,19 +53,98 @@ class WorkspaceTest extends DatabaseTestCase
         $this->request()->assertNotFound()->assertJsonPath('error', 'Рабочая доска не найдена.');
     }
 
+    public function test_organization_board_is_shared_with_members_but_managed_only_by_owner(): void
+    {
+        $accountId = DB::table('corporate_accounts')->insertGetId([
+            'root_username' => '@Root'.bin2hex(random_bytes(3)),
+            'root_email' => 'organization@example.com',
+            'root_password_hash' => 'not-used-in-this-test',
+            'organization_name' => 'Example Org',
+        ]);
+        foreach ([[$this->user, 'owner'], [$this->other, 'manager']] as [$member, $role]) {
+            DB::table('corporate_account_members')->insert([
+                'corporate_account_id' => $accountId,
+                'user_id' => $member->id,
+                'email' => $member->id === $this->user->id ? 'owner@example.com' : 'manager@example.com',
+                'role' => $role,
+                'accepted_at' => now(),
+            ]);
+        }
+        $companyBoard = DB::table('boards')->insertGetId([
+            'user_id' => $this->user->id,
+            'corporate_account_id' => $accountId,
+            'name' => 'Example Org',
+            'board_type' => 'corporate',
+        ]);
+        $companyList = $this->list($this->user->id, $companyBoard, 'Shared list');
+        $this->task($this->user->id, $companyList, 'Shared task');
+
+        Auth::login($this->other);
+        $this->request(query: '?board_id='.$companyBoard)->assertOk()
+            ->assertJsonPath('data.board.corporate_account_id', $accountId)
+            ->assertJsonPath('data.tasks.0.title', 'Shared task')
+            ->assertJsonPath('data.corporate_accounts.0.role', 'manager');
+        $createdList = $this->postWorkspace(['action' => 'create_list', 'board_id' => $companyBoard, 'name' => 'Created by member'])
+            ->assertCreated()->json('data.list.id');
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $createdList, 'title' => 'Member task'])->assertCreated();
+        $this->assertDatabaseHas('task_lists', ['id' => $createdList, 'user_id' => $this->user->id]);
+        $this->postWorkspace(['action' => 'create_board', 'name' => 'Unauthorized org board', 'board_type' => 'corporate',
+            'corporate_account_id' => $accountId])->assertForbidden();
+        $this->request('DELETE', query: '?board_id='.$companyBoard)->assertForbidden();
+
+        $outsider = $this->createUser();
+        Auth::login($outsider);
+        $this->request(query: '?board_id='.$companyBoard)->assertNotFound();
+
+        Auth::login($this->user);
+        $this->postWorkspace(['action' => 'create_board', 'name' => 'Extra org board', 'board_type' => 'corporate',
+            'corporate_account_id' => $accountId])->assertCreated()->assertJsonPath('data.board.corporate_account_id', $accountId);
+    }
+
+    public function test_only_corporate_owner_can_invite_members(): void
+    {
+        Mail::fake();
+        $accountId = DB::table('corporate_accounts')->insertGetId([
+            'root_username' => '@Root'.bin2hex(random_bytes(3)), 'root_email' => 'organization@example.com',
+            'root_password_hash' => 'not-used-in-this-test', 'organization_name' => 'Example Org',
+        ]);
+        DB::table('corporate_account_members')->insert([
+            'corporate_account_id' => $accountId, 'user_id' => $this->user->id,
+            'email' => 'owner@example.com', 'role' => 'owner', 'accepted_at' => now(),
+        ]);
+
+        $this->postWorkspace(['action' => 'invite_member', 'corporate_account_id' => $accountId,
+            'identifier' => 'new-member@example.com', 'role' => 'support'])->assertCreated()
+            ->assertJsonPath('data.invited', true)->assertJsonPath('data.email_sent', true);
+        $this->assertDatabaseHas('corporate_account_members', [
+            'corporate_account_id' => $accountId, 'email' => 'new-member@example.com', 'role' => 'support',
+        ]);
+        Mail::assertSent(\App\Mail\CorporateAccountInvitation::class, fn ($mail): bool => $mail->hasTo('new-member@example.com'));
+
+        Auth::login($this->other);
+        $this->postWorkspace(['action' => 'invite_member', 'corporate_account_id' => $accountId,
+            'identifier' => 'blocked@example.com', 'role' => 'support'])->assertForbidden();
+    }
+
     public function test_board_create_update_and_duplicate_names_are_scoped_to_user(): void
     {
         $created = $this->postWorkspace(['action' => 'create_board', 'name' => ' Foreign ', 'description' => ' text ', 'board_type' => 'community',
             'user_id' => $this->other->id, 'is_default' => true])->assertCreated();
         $id = $created->json('data.board.id');
         $created->assertExactJson(['success' => true, 'data' => ['board' => [
-            'id' => $id, 'name' => 'Foreign', 'description' => 'text', 'board_type' => 'community',
+            'id' => $id, 'name' => 'Foreign', 'description' => 'text', 'board_type' => 'community', 'corporate_account_id' => null,
         ]]]);
         $this->assertSame($this->user->id, (int) DB::table('boards')->where('id', $id)->value('user_id'));
         $this->assertFalse(DB::table('boards')->where('id', $id)->value('is_default'));
+        $this->assertDatabaseHas('task_lists', [
+            'user_id' => $this->user->id,
+            'board_id' => $id,
+            'name' => '👋 Hello World!',
+            'description' => 'Это ваш первый список',
+        ]);
         $this->postWorkspace(['action' => 'create_board', 'name' => 'Foreign'])->assertConflict()
             ->assertJsonPath('error', 'Это название уже используется. Выберите другое.');
-        $this->postWorkspace(['action' => 'update_board', 'board_id' => $id, 'name' => 'Renamed', 'board_type' => 'corporate'])
+        $this->postWorkspace(['action' => 'update_board', 'board_id' => $id, 'name' => 'Renamed', 'board_type' => 'community'])
             ->assertOk()->assertJsonPath('data.board.description', '')->assertJsonPath('data.board.name', 'Renamed');
         $this->postWorkspace(['action' => 'update_board', 'board_id' => $id, 'name' => 'Default', 'board_type' => 'personal'])->assertConflict();
         $this->assertSame('Renamed', DB::table('boards')->where('id', $id)->value('name'));
@@ -92,6 +173,28 @@ class WorkspaceTest extends DatabaseTestCase
                 'flag' => ['id' => $flag, 'board_id' => $this->board, 'name' => 'Flag', 'color' => 'blue']]]);
         $this->request()->assertJsonPath('data.lists.0.description', 'New description')
             ->assertJsonPath('data.lists.0.theme', 'blue')->assertJsonPath('data.lists.0.is_important', false);
+    }
+
+    public function test_flags_can_be_created_independently_and_are_scoped_to_an_owned_board(): void
+    {
+        $response = $this->postWorkspace(['action' => 'create_flag', 'board_id' => $this->board, 'name' => '  Follow up  '])
+            ->assertCreated()->assertJsonPath('data.flag.name', 'Follow up')
+            ->assertJsonPath('data.flag.board_id', $this->board)->assertJsonPath('data.flag.color', 'blue');
+        $flagId = $response->json('data.flag.id');
+        $this->assertDatabaseHas('user_flags', [
+            'id' => $flagId,
+            'user_id' => $this->user->id,
+            'board_id' => $this->board,
+            'name' => 'Follow up',
+        ]);
+
+        $this->postWorkspace(['action' => 'create_flag', 'board_id' => $this->foreignBoard, 'name' => 'Foreign'])
+            ->assertNotFound();
+        $this->postWorkspace(['action' => 'create_flag', 'board_id' => $this->board, 'name' => 'Follow up'])
+            ->assertConflict();
+        $this->postWorkspace(['action' => 'create_flag', 'board_id' => $this->board, 'name' => str_repeat('x', 41)])
+            ->assertUnprocessable();
+        $this->assertSame(1, DB::table('user_flags')->where('user_id', $this->user->id)->count());
     }
 
     public function test_toggle_both_directions_update_and_reorder_in_both_directions(): void

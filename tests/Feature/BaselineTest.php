@@ -12,6 +12,38 @@ use Tests\DatabaseTestCase;
 
 class BaselineTest extends DatabaseTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // These tests exercise adoption of the frozen legacy schema, so temporarily restore
+        // that schema inside the test transaction after all forward migrations are applied.
+        $telegramLinksMigration = require database_path('migrations/2026_10_27_000010_add_telegram_profile_links.php');
+        $telegramLinksMigration->down();
+        $registrationPreferencesMigration = require database_path('migrations/2026_10_27_000009_add_registration_preferences_and_consents.php');
+        $registrationPreferencesMigration->down();
+        $corporateBoardMigration = require database_path('migrations/2026_10_27_000008_add_corporate_board_membership.php');
+        $corporateBoardMigration->down();
+        $corporateRootMigration = require database_path('migrations/2026_10_27_000007_add_corporate_root_credentials.php');
+        $corporateRootMigration->down();
+        $corporateAccountCreatorMigration = require database_path('migrations/2026_10_27_000006_rename_corporate_account_owner_to_creator.php');
+        $corporateAccountCreatorMigration->down();
+        $corporateAccountsMigration = require database_path('migrations/2026_10_27_000005_create_corporate_accounts.php');
+        $corporateAccountsMigration->down();
+        $middleNameMigration = require database_path('migrations/2026_10_27_000004_add_middle_name_to_users.php');
+        $middleNameMigration->down();
+        $organizationTypesMigration = require database_path('migrations/2026_10_27_000003_split_organization_types.php');
+        $organizationTypesMigration->down();
+        $handleMigration = require database_path('migrations/2026_10_27_000002_username_handle_prefix.php');
+        $handleMigration->down();
+        $organizationMigration = require database_path('migrations/2026_10_27_000001_add_organization_details.php');
+        $organizationMigration->down();
+        $usernameMigration = require database_path('migrations/2026_10_27_000000_tighten_username_format.php');
+        $usernameMigration->down();
+        $registrationMigration = require database_path('migrations/2026_10_26_000001_update_registration_identity.php');
+        $registrationMigration->down();
+    }
+
     public function test_the_clean_migration_matches_the_frozen_baseline(): void
     {
         $this->assertSame([], LegacySchema::differences(DB::connection()));

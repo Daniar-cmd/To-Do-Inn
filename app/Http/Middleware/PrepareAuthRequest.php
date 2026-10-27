@@ -11,6 +11,9 @@ use Symfony\Component\HttpFoundation\Response;
 /** Preserve the standalone auth API's method, JSON and body-size checks before CSRF. */
 class PrepareAuthRequest
 {
+    private const MAX_REGISTRATION_BYTES = 1_500_000;
+    private const MAX_OTHER_REQUEST_BYTES = 8_192;
+
     public function handle(Request $request, Closure $next): Response
     {
         if (!$request->is('api/auth.php')) {
@@ -39,18 +42,28 @@ class PrepareAuthRequest
         }
 
         $length = $request->header('Content-Length');
-        if (is_string($length) && ctype_digit($length) && (int) $length > 8192) {
+        if (is_string($length) && ctype_digit($length) && (int) $length > self::MAX_REGISTRATION_BYTES) {
             return $this->error(413, 'Request is too large');
         }
 
-        $raw = stream_get_contents($request->getContent(asResource: true), 8193);
-        if ($raw === false || strlen($raw) > 8192) {
+        $raw = stream_get_contents($request->getContent(asResource: true), self::MAX_REGISTRATION_BYTES + 1);
+        if ($raw === false || strlen($raw) > self::MAX_REGISTRATION_BYTES) {
             return $this->error(413, 'Request is too large');
         }
 
         $input = json_decode($raw, true);
         if (!is_array($input) || json_last_error() !== JSON_ERROR_NONE) {
+            if (strlen($raw) > self::MAX_OTHER_REQUEST_BYTES) {
+                return $this->error(413, 'Request is too large');
+            }
             return $this->error(400, 'Invalid JSON request');
+        }
+
+        $maximumBytes = ($input['action'] ?? null) === 'register'
+            ? self::MAX_REGISTRATION_BYTES
+            : self::MAX_OTHER_REQUEST_BYTES;
+        if (strlen($raw) > $maximumBytes) {
+            return $this->error(413, 'Request is too large');
         }
 
         $request->setJson(new InputBag($input));

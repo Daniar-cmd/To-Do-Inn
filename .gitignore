@@ -12,3 +12,7 @@ dist/
 .vscode/
 .opencode/
 AGENTS.md 
+/docs
+!/docs/
+/docs/*
+!/docs/corporate-accounts.md
