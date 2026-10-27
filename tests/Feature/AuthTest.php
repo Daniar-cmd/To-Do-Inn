@@ -71,11 +71,181 @@ class AuthTest extends DatabaseTestCase
             'name' => '👋 Hello World!',
             'description' => 'Это ваш первый список',
         ]);
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $user->id,
+            'sender' => 'ToDo-Inn!',
+            'message' => 'Добро пожаловать в ToDo-inn! Здесь вы можете организовать свои дела или работу предприятия. Надеемся, мы сработаемся!',
+            'read_at' => null,
+        ]);
         $this->assertNotSame($oldId, $this->app['session.store']->getId());
         $this->assertNotSame($oldToken, $this->app['session.store']->token());
 
         $this->getAuth()->assertJsonPath('data.user', $response->json('data.user'));
         $this->assertSame(['id', 'username', 'account_type'], array_keys($response->json('data.user')));
+    }
+
+    public function test_legacy_personal_account_can_refresh_credentials_without_touching_workspace_data(): void
+    {
+        $user = $this->createUser();
+        $user->forceFill([
+            'username' => '@OldLegacy',
+            'first_name' => 'СтароеИмя',
+            'last_name' => 'СтараяФамилия',
+            'email' => 'old-legacy@example.com',
+            'about' => 'Старое описание',
+        ])->save();
+        DB::table('users')->where('id', $user->id)->update(['password_hash' => password_hash('OldPassword123!', PASSWORD_BCRYPT)]);
+        $user->forceFill(['registration_version' => 1])->save();
+        $createdAt = $user->created_at->toDateTimeString();
+        $board = $user->boards()->create(['name' => 'Мои старые дела', 'is_default' => true]);
+        $listId = DB::table('task_lists')->insertGetId(['user_id' => $user->id, 'board_id' => $board->id, 'name' => 'Старый список']);
+        $taskId = DB::table('tasks')->insertGetId(['user_id' => $user->id, 'list_id' => $listId, 'title' => 'Сохранить эту задачу']);
+
+        Auth::login($user);
+        $newEmail = 'upgraded-'.bin2hex(random_bytes(5)).'@example.com';
+        $this->withSession(['_token' => str_repeat('a', 40), 'registration_verified_email' => $newEmail]);
+        $this->postAuth(['action' => 'legacy_account_status'])->assertOk()->assertJsonPath('data.required', true);
+        $this->postAuth(['action' => 'validate_registration_username', 'username' => '@FreshLegacy'])
+            ->assertOk()->assertJsonPath('data.available', true);
+        $this->postAuth(['action' => 'validate_registration_email', 'email' => $newEmail, 'account_type' => 'individual'])
+            ->assertOk()->assertJsonPath('data.available', true);
+
+        $registration = $this->registration([
+            'username' => '@FreshLegacy', 'email' => $newEmail,
+            'password' => 'FreshPassword123!', 'confirm_password' => 'FreshPassword123!',
+            'first_name' => 'НовоеИмя', 'last_name' => 'НоваяФамилия',
+        ]);
+        $response = $this->postRegistration($registration)->assertOk()->assertJsonPath('data.upgraded', true);
+
+        $updated = User::findOrFail($user->id);
+        $this->assertSame($user->id, $response->json('data.user.id'));
+        $this->assertSame('@FreshLegacy', $updated->username);
+        $this->assertSame($newEmail, $updated->email);
+        $this->assertSame('НовоеИмя', $updated->first_name);
+        $this->assertSame($createdAt, $updated->created_at->toDateTimeString());
+        $this->assertTrue(Hash::check('FreshPassword123!', $updated->getAuthPassword()));
+        $this->assertSame('argon2id', password_get_info($updated->getAuthPassword())['algoName']);
+        $this->assertSame([$board->id], $updated->boards()->pluck('id')->all());
+        $this->assertSame([$listId], $updated->taskLists()->pluck('id')->all());
+        $this->assertSame([$taskId], $updated->tasks()->pluck('id')->all());
+        $this->assertSame('Сохранить эту задачу', $updated->tasks()->first()->title);
+        $this->postAuth(['action' => 'legacy_account_status'])->assertOk()->assertJsonPath('data.required', false);
+    }
+
+    public function test_legacy_corporate_account_can_switch_to_a_new_corporate_type_and_keep_its_workspace(): void
+    {
+        $user = $this->createUser();
+        $user->forceFill([
+            'username' => '@OldCompany',
+            'account_type' => 'corporate',
+            'first_name' => '',
+            'last_name' => '',
+            'email' => 'old-company-'.bin2hex(random_bytes(4)).'@example.com',
+        ])->save();
+        DB::table('users')->where('id', $user->id)->update([
+            'password_hash' => password_hash('OldCompany123!', PASSWORD_BCRYPT),
+            'registration_version' => 1,
+        ]);
+        $board = $user->boards()->create(['name' => 'Старый корпоративный workspace', 'is_default' => true]);
+        $listId = DB::table('task_lists')->insertGetId([
+            'user_id' => $user->id, 'board_id' => $board->id, 'name' => 'Не трогать список',
+        ]);
+        $taskId = DB::table('tasks')->insertGetId([
+            'user_id' => $user->id, 'list_id' => $listId, 'title' => 'Не трогать задачу',
+        ]);
+        Auth::login($user);
+        $this->withSession([
+            '_token' => str_repeat('a', 40),
+            'registration_verified_email' => $user->email,
+        ]);
+
+        $this->postAuth(['action' => 'legacy_account_status'])->assertOk()->assertJsonPath('data.required', true);
+        $input = $this->registration([
+            'username' => '@NewCompany',
+            'email' => $user->email,
+            'account_type' => 'corporate',
+            'first_name' => '',
+            'last_name' => '',
+            'organization_type' => 'ООО',
+            'organization_name' => 'Новая организация',
+            'password' => 'NewCompany123!',
+            'confirm_password' => 'NewCompany123!',
+        ]);
+        $input['administrators'] = [['role' => 'owner', 'identifier' => $user->email]];
+        $response = $this->postRegistration($input)->assertOk()->assertJsonPath('data.upgraded', true);
+
+        $accountId = $response->json('data.corporate_account.id');
+        $this->assertNotSame('@OldCompany', User::findOrFail($user->id)->username);
+        $this->assertSame('individual', User::findOrFail($user->id)->account_type);
+        $this->assertSame(2, (int) User::findOrFail($user->id)->registration_version);
+        $this->assertDatabaseHas('corporate_account_members', [
+            'corporate_account_id' => $accountId, 'user_id' => $user->id, 'role' => 'owner',
+        ]);
+        $this->assertDatabaseHas('boards', ['id' => $board->id, 'user_id' => $user->id, 'corporate_account_id' => null]);
+        $this->assertDatabaseHas('task_lists', ['id' => $listId, 'user_id' => $user->id, 'board_id' => $board->id]);
+        $this->assertDatabaseHas('tasks', ['id' => $taskId, 'user_id' => $user->id, 'list_id' => $listId, 'title' => 'Не трогать задачу']);
+        $this->assertDatabaseHas('notifications', ['corporate_account_id' => $accountId, 'sender' => 'ToDo-Inn!']);
+        $this->getAuth()->assertJsonPath('data.user', null)->assertJsonPath('data.corporate_account.id', $accountId);
+
+        $this->postAuth(['action' => 'logout'])->assertOk();
+        $this->postAuth(['action' => 'login', 'username' => $user->email, 'password' => 'NewCompany123!'])
+            ->assertOk()->assertJsonPath('data.account_choices', ['individual', 'corporate']);
+    }
+
+    public function test_legacy_corporate_account_can_switch_to_individual_without_losing_boards(): void
+    {
+        $user = $this->createUser();
+        $user->forceFill(['username' => '@OldTeam', 'account_type' => 'corporate', 'email' => 'old-team@example.com'])->save();
+        DB::table('users')->where('id', $user->id)->update([
+            'password_hash' => password_hash('OldTeam123!', PASSWORD_BCRYPT), 'registration_version' => 1,
+        ]);
+        $board = $user->boards()->create(['name' => 'Доска останется', 'is_default' => true]);
+        Auth::login($user);
+        $this->withSession([
+            '_token' => str_repeat('a', 40),
+            'registration_verified_email' => $user->email,
+        ]);
+
+        $input = $this->registration([
+            'username' => '@NewIndividual',
+            'email' => $user->email,
+            'account_type' => 'individual',
+            'password' => 'NewIndividual123!',
+            'confirm_password' => 'NewIndividual123!',
+        ]);
+        $this->postRegistration($input)->assertOk()->assertJsonPath('data.upgraded', true);
+
+        $updated = User::findOrFail($user->id);
+        $this->assertSame('individual', $updated->account_type);
+        $this->assertSame('@NewIndividual', $updated->username);
+        $this->assertSame([$board->id], $updated->boards()->pluck('id')->all());
+        $this->assertDatabaseMissing('corporate_accounts', ['root_email' => $user->email]);
+        $this->postAuth(['action' => 'legacy_account_status'])->assertOk()->assertJsonPath('data.required', false);
+    }
+
+    public function test_user_can_read_and_mark_only_their_notifications_as_read(): void
+    {
+        $registration = $this->postRegistration($this->registration())->assertCreated();
+        $userId = $registration->json('data.user.id');
+        $notification = DB::table('notifications')->where('user_id', $userId)->first();
+
+        $response = $this->postAuth(['action' => 'get_notifications'])->assertOk()
+            ->assertJsonPath('data.unread_count', 1)
+            ->assertJsonPath('data.notifications.0.sender', 'ToDo-Inn!')
+            ->assertJsonPath('data.notifications.0.is_read', false);
+        $this->assertSame((int) $notification->id, $response->json('data.notifications.0.id'));
+
+        $this->postAuth(['action' => 'mark_notification_read', 'notification_id' => (int) $notification->id])
+            ->assertOk()->assertJsonPath('data.read', true);
+        $this->postAuth(['action' => 'get_notifications'])
+            ->assertOk()->assertJsonPath('data.unread_count', 0)
+            ->assertJsonPath('data.notifications.0.is_read', true);
+
+        $other = $this->createUser();
+        Auth::logout();
+        Auth::login($other);
+        $this->postAuth(['action' => 'mark_notification_read', 'notification_id' => (int) $notification->id])
+            ->assertNotFound();
     }
 
     public function test_registration_requires_personal_data_consent_and_saves_optional_preferences(): void
@@ -206,6 +376,27 @@ class AuthTest extends DatabaseTestCase
             'corporate_account_id' => $accountId, 'email' => $ownerEmail, 'role' => 'owner', 'user_id' => null,
         ]);
         Mail::assertSent(CorporateAccountInvitation::class, fn (CorporateAccountInvitation $mail): bool => $mail->hasTo($ownerEmail) && $mail->role === 'owner');
+    }
+
+    public function test_new_corporate_account_receives_a_welcome_notification_for_root_login(): void
+    {
+        $input = $this->registration([
+            'account_type' => 'corporate', 'first_name' => '', 'last_name' => '',
+            'organization_type' => 'ООО', 'organization_name' => 'Добро пожаловать',
+        ]);
+        $input['administrators'] = [['role' => 'owner', 'identifier' => $input['email']]];
+        $registration = $this->postRegistration($input)->assertCreated();
+        $accountId = $registration->json('data.corporate_account.id');
+        $notification = DB::table('notifications')->where('corporate_account_id', $accountId)->first();
+        $this->assertNotNull($notification);
+
+        $this->postAuth(['action' => 'login', 'username' => $input['username'], 'password' => $input['password']])->assertOk();
+        $this->postAuth(['action' => 'get_notifications'])->assertOk()
+            ->assertJsonPath('data.unread_count', 1)
+            ->assertJsonPath('data.notifications.0.sender', 'ToDo-Inn!')
+            ->assertJsonPath('data.notifications.0.is_read', false);
+        $this->postAuth(['action' => 'mark_notification_read', 'notification_id' => (int) $notification->id])
+            ->assertOk()->assertJsonPath('data.read', true);
     }
 
     public function test_organization_and_director_can_share_email_and_root_login_is_separate(): void

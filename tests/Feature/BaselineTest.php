@@ -18,6 +18,10 @@ class BaselineTest extends DatabaseTestCase
 
         // These tests exercise adoption of the frozen legacy schema, so temporarily restore
         // that schema inside the test transaction after all forward migrations are applied.
+        $registrationVersionMigration = require database_path('migrations/2026_10_27_000012_add_registration_version_to_users.php');
+        $registrationVersionMigration->down();
+        $notificationsMigration = require database_path('migrations/2026_10_27_000011_create_notifications.php');
+        $notificationsMigration->down();
         $telegramLinksMigration = require database_path('migrations/2026_10_27_000010_add_telegram_profile_links.php');
         $telegramLinksMigration->down();
         $registrationPreferencesMigration = require database_path('migrations/2026_10_27_000009_add_registration_preferences_and_consents.php');

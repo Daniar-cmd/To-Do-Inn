@@ -15,6 +15,8 @@ const routes = {
 
 export function App() {
   const route = routes[window.location.pathname] || 'login';
+  const upgradingLegacyAccount = route === 'register'
+    && new URLSearchParams(window.location.search).get('upgrade') === '1';
   const [redirecting, setRedirecting] = useState(route === 'workspace');
 
   useEffect(() => {
@@ -24,9 +26,11 @@ export function App() {
       .then(({ user, corporate_account: corporateAccount }) => {
         if (corporateAccount && route !== 'organization-root') {
           window.location.replace('/pages/organization-root.html');
+        } else if (upgradingLegacyAccount && !user) {
+          window.location.replace('/');
         } else if (route === 'organization-root' && !corporateAccount) {
           window.location.replace('/');
-        } else if (user && route !== 'registration-success' && route !== 'corporate-invitation') {
+        } else if (user && route !== 'registration-success' && route !== 'corporate-invitation' && !upgradingLegacyAccount) {
           window.location.replace('/pages/workspace.html');
         } else if (route === 'registration-success' && !user && !new URLSearchParams(window.location.search).has('corporate')) {
           window.location.replace('/');

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { getSession, sendAuthRequest } from '../api.js';
+import { NotificationsMenu } from '../NotificationsMenu.jsx';
 import { CustomSelect } from './CustomSelect.jsx';
 import personalAccountIcon from './icons/account-personal.svg';
 import corporateAccountIcon from './icons/account-corporate.svg';
@@ -302,6 +303,7 @@ function LoginPage() {
 
 function RegisterPage() {
   const { csrfToken, connectionError } = useCsrfToken();
+  const upgradeMode = new URLSearchParams(window.location.search).get('upgrade') === '1';
   const [form, setForm] = useState({ username: '', firstName: '', lastName: '', middleName: '', organizationType: 'ООО', organizationName: '', password: '', confirmation: '', email: '', accountType: 'individual', avatar: null, about: '', secondaryEmail: '', githubUrl: '', telegramUrl: '', preferredTheme: 'system', personalDataConsent: false, marketingConsent: false });
   const [identityStep, setIdentityStep] = useState('email');
   const [emailCode, setEmailCode] = useState('');
@@ -755,6 +757,10 @@ function RegisterPage() {
         marketing_consent: form.marketingConsent,
       }, csrfToken);
       navigationApprovedRef.current = true;
+      if (result.upgraded) {
+        window.location.assign(result.corporate_account ? '/pages/organization-root.html' : '/pages/workspace.html');
+        return;
+      }
       const successParams = new URLSearchParams();
       if (result.corporate_account) successParams.set('corporate', 'created');
       if (result.invitation_delivery_failures?.length) successParams.set('invitations', 'failed');
@@ -822,14 +828,16 @@ function RegisterPage() {
 
   return (
     <AuthLayout wide={identityStep === 'corporate-admin' || identityStep === 'finish'} corporateAdmin={identityStep === 'corporate-admin'}>
-      <AuthHeader eyebrow={registrationMotivation[0]} title={registrationTitle} progress={registrationProgress}>
-        {registrationMotivation[1]}
+      <AuthHeader eyebrow={upgradeMode ? 'ОБНОВЛЕНИЕ АККАУНТА' : registrationMotivation[0]} title={upgradeMode ? 'Обновите данные' : registrationTitle} progress={registrationProgress}>
+        {upgradeMode
+          ? <>Подтвердите почту и задайте новый логин и пароль. Ваши доски, списки и задачи останутся на месте.{form.accountType === 'corporate' && ' Корпоративный аккаунт будет создан отдельно, без переноса старых досок.'}</>
+          : registrationMotivation[1]}
       </AuthHeader>
       <form className="auth-form" noValidate onSubmit={handleSubmit}>
         <div className={`register-identity is-${identityStep}-step`}>
           <div className={`register-identity__step register-identity__step--email${identityStep === 'email' ? ' is-active' : ''}`} aria-hidden={identityStep !== 'email'} inert={identityStep !== 'email'}>
             <div className="auth-form__field">
-              <label htmlFor="email">Электронная почта</label>
+              <label htmlFor="email">{upgradeMode ? 'Новая электронная почта' : 'Электронная почта'}</label>
               <input id="email" name="email" type="email" autoComplete="email" placeholder="name@example.com" value={form.email} aria-invalid={Boolean(feedback.email || emailInUse)} onChange={(event) => updateField('email', event.target.value)} onKeyDown={(event) => {
                 if (event.key !== 'Enter') return;
                 event.preventDefault();
@@ -1273,10 +1281,36 @@ function OrganizationRootPage() {
   const { csrfToken, connectionError } = useCsrfToken();
   const [message, setMessage] = useState('');
   const [organization, setOrganization] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationBusyId, setNotificationBusyId] = useState(null);
 
   useEffect(() => {
     getSession().then(({ corporate_account: account }) => setOrganization(account || null)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!csrfToken) return undefined;
+    let active = true;
+    sendAuthRequest('get_notifications', {}, csrfToken)
+      .then((data) => { if (active) setNotifications(data.notifications || []); })
+      .catch((error) => { if (active) setNotificationError(error.message); });
+    return () => { active = false; };
+  }, [csrfToken]);
+
+  async function markNotificationRead(notification) {
+    if (notification.is_read || notificationBusyId !== null) return;
+    setNotificationBusyId(notification.id);
+    setNotificationError('');
+    try {
+      await sendAuthRequest('mark_notification_read', { notification_id: notification.id }, csrfToken);
+      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, is_read: true } : item));
+    } catch (error) {
+      setNotificationError(error.message);
+    } finally {
+      setNotificationBusyId(null);
+    }
+  }
 
   async function logout() {
     if (!csrfToken) return;
@@ -1290,6 +1324,7 @@ function OrganizationRootPage() {
 
   return (
     <AuthLayout success>
+      <div className="organization-root-notifications"><NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} /></div>
       <AuthHeader eyebrow="ROOT-АККАУНТ ОРГАНИЗАЦИИ" title="Фундаментальные настройки">
         Root-аккаунт организации не используется для повседневной работы сотрудников.
       </AuthHeader>

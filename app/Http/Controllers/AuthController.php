@@ -63,6 +63,9 @@ class AuthController
             'check_login_email' => $this->checkLoginEmail($input),
             'request_password_reset' => $this->requestPasswordReset($input),
             'reset_password' => $this->resetPassword($input),
+            'get_notifications' => $this->getNotifications($request),
+            'mark_notification_read' => $this->markNotificationRead($request, $input),
+            'legacy_account_status' => $this->legacyAccountStatus($request),
             'accept_corporate_invitation' => $this->acceptCorporateInvitation($input),
             'validate_corporate_admin_identifier' => $this->validateCorporateAdminIdentifier($input),
             'validate_registration_username' => $this->validateRegistrationUsername($input),
@@ -85,7 +88,7 @@ class AuthController
         $email = strtolower(trim($email));
         $request->session()->forget('registration_verified_email');
         $cacheKey = 'email-verification-code:'.hash('sha256', $email);
-        $existingAccounts = $this->emailAccountTypes($email);
+        $existingAccounts = $this->emailAccountTypes($email, $this->legacyUpgradeUserId());
         if (count($existingAccounts) > 1) {
             Cache::forget($cacheKey);
 
@@ -127,7 +130,7 @@ class AuthController
             return $this->error(422, 'Проверьте формат e-mail.');
         }
 
-        return $this->success(['existing_accounts' => $this->emailAccountTypes(strtolower(trim($email)))]);
+        return $this->success(['existing_accounts' => $this->emailAccountTypes(strtolower(trim($email)), $this->legacyUpgradeUserId())]);
     }
 
     private function checkLoginEmail(#[\SensitiveParameter] array $input): JsonResponse
@@ -409,15 +412,31 @@ class AuthController
             return $this->error(422, 'Сначала подтвердите e-mail.');
         }
 
-        if ($data['account_type'] === 'individual'
-            && User::query()->whereRaw('LOWER(email) = ?', [$email])->exists()) {
+        $authenticatedUser = Auth::user();
+        $upgradeUser = $authenticatedUser instanceof User && $this->isLegacyAccount($authenticatedUser)
+            ? $authenticatedUser
+            : null;
+        if ($authenticatedUser instanceof User && $upgradeUser === null) {
+            return $this->error(409, 'Обновление доступно только для старого личного аккаунта.');
+        }
+        if ($upgradeUser !== null && strcasecmp($data['username'], $upgradeUser->username) === 0) {
+            return $this->error(422, 'Для обновления придумайте новый логин.');
+        }
+
+        $emailQuery = User::query()->whereRaw('LOWER(email) = ?', [$email]);
+        $usernameQuery = User::query()->whereRaw('LOWER(username) = ?', [strtolower($data['username'])]);
+        if ($upgradeUser !== null) {
+            $emailQuery->whereKeyNot($upgradeUser->id);
+            $usernameQuery->whereKeyNot($upgradeUser->id);
+        }
+        if ($data['account_type'] === 'individual' && $emailQuery->exists()) {
             return $this->error(409, 'Этот e-mail уже привязан к личному аккаунту.');
         }
         if ($data['account_type'] === 'corporate'
             && DB::table('corporate_accounts')->whereRaw('LOWER(root_email) = ?', [$email])->exists()) {
             return $this->error(409, 'Эта почта уже привязана к аккаунту организации.');
         }
-        if (User::query()->whereRaw('LOWER(username) = ?', [strtolower($data['username'])])->exists()) {
+        if ($usernameQuery->exists()) {
             return $this->error(409, 'Этот логин уже используется личным аккаунтом.');
         }
         if (DB::table('corporate_accounts')->whereRaw('LOWER(root_username) = ?', [strtolower($data['username'])])->exists()) {
@@ -482,12 +501,64 @@ class AuthController
         $sentInvitations = [];
 
         try {
-            $result = DB::transaction(function () use ($data, $passwordHash, $administratorInvitations, $secondaryEmail, $githubUrl, $telegramUrl, $avatar, &$sentInvitations): array {
+            $result = DB::transaction(function () use ($data, $passwordHash, $administratorInvitations, $secondaryEmail, $githubUrl, $telegramUrl, $avatar, $upgradeUser, &$sentInvitations): array {
+                if ($upgradeUser !== null) {
+                    $user = User::query()->whereKey($upgradeUser->id)->lockForUpdate()->first();
+                    if ($user === null || !$this->isLegacyAccount($user)) {
+                        return ['upgrade_failed' => true, 'corporate_account_id' => null, 'user' => null];
+                    }
+
+                    $workspaceUsername = $data['username'];
+                    if ($data['account_type'] === 'corporate') {
+                        do {
+                            $workspaceUsername = '@Legacy'.bin2hex(random_bytes(5));
+                        } while (User::query()->whereRaw('LOWER(username) = ?', [strtolower($workspaceUsername)])->exists()
+                            || DB::table('corporate_accounts')->whereRaw('LOWER(root_username) = ?', [strtolower($workspaceUsername)])->exists());
+                    }
+
+                    $user->forceFill([
+                        'username' => $workspaceUsername,
+                        'first_name' => $data['first_name'],
+                        'last_name' => $data['last_name'],
+                        'middle_name' => $data['middle_name'] ?? null,
+                        'email' => strtolower($data['email']),
+                        'password_hash' => $passwordHash,
+                        // Keep the existing User row as the private workspace identity so its
+                        // boards and task ownership stay intact when a separate corporate root is created.
+                        'account_type' => 'individual',
+                        'registration_version' => 2,
+                        'organization_type' => null,
+                        'organization_name' => null,
+                        'secondary_email' => $secondaryEmail === '' ? null : $secondaryEmail,
+                        'about' => trim((string) ($data['about'] ?? '')),
+                        'github_url' => $githubUrl === '' ? null : $githubUrl,
+                        'telegram_url' => $telegramUrl === '' ? null : $telegramUrl,
+                        'preferred_theme' => $data['preferred_theme'] ?? 'system',
+                        'username_changed_at' => now(),
+                        'personal_data_consent_at' => now(),
+                        'personal_data_consent_version' => self::CONSENT_VERSION,
+                        'marketing_consent' => (bool) ($data['marketing_consent'] ?? false),
+                        'marketing_consent_at' => ($data['marketing_consent'] ?? false) ? now() : null,
+                    ])->save();
+                    DB::update("UPDATE users SET avatar_data = decode(?, 'base64'), avatar_mime = ? WHERE id = ?", [
+                        $avatar['base64'], $avatar['mime'], $user->id,
+                    ]);
+
+                    if ($data['account_type'] === 'individual') {
+                        return ['corporate_account_id' => null, 'user' => $user, 'upgraded' => true];
+                    }
+
+                    $upgradedWorkspaceUser = $user;
+                } else {
+                    $upgradedWorkspaceUser = null;
+                }
+
                 if ($data['account_type'] === 'corporate') {
                     $accountId = DB::table('corporate_accounts')->insertGetId([
                         'root_username' => $data['username'],
                         'root_email' => strtolower($data['email']),
                         'root_password_hash' => $passwordHash,
+                        'created_by_user_id' => $upgradedWorkspaceUser?->id,
                         'organization_type' => $data['organization_type'],
                         'organization_name' => $data['organization_name'],
                         'secondary_email' => $secondaryEmail === '' ? null : $secondaryEmail,
@@ -507,6 +578,18 @@ class AuthController
                     }
 
                     foreach ($administratorInvitations as $invitation) {
+                        if ($upgradedWorkspaceUser !== null && $invitation['role'] === 'owner'
+                            && strcasecmp($invitation['email'], strtolower($data['email'])) === 0) {
+                            DB::table('corporate_account_members')->insert([
+                                'corporate_account_id' => $accountId,
+                                'user_id' => $upgradedWorkspaceUser->id,
+                                'email' => $invitation['email'],
+                                'role' => 'owner',
+                                'accepted_at' => now(),
+                            ]);
+                            continue;
+                        }
+
                         DB::table('corporate_account_members')->insert([
                             'corporate_account_id' => $accountId,
                             'email' => $invitation['email'],
@@ -517,7 +600,13 @@ class AuthController
                         $sentInvitations[] = $invitation;
                     }
 
-                    return ['corporate_account_id' => $accountId, 'user' => null];
+                    DB::table('notifications')->insert([
+                        'corporate_account_id' => $accountId,
+                        'sender' => 'ToDo-Inn!',
+                        'message' => 'Добро пожаловать в ToDo-inn! Здесь вы можете организовать свои дела или работу предприятия. Надеемся, мы сработаемся!',
+                    ]);
+
+                    return ['corporate_account_id' => $accountId, 'user' => null, 'upgraded' => $upgradedWorkspaceUser !== null];
                 }
 
                 $user = User::create([
@@ -550,6 +639,11 @@ class AuthController
                     'name' => '👋 Hello World!',
                     'description' => 'Это ваш первый список',
                 ]);
+                DB::table('notifications')->insert([
+                    'user_id' => $user->id,
+                    'sender' => 'ToDo-Inn!',
+                    'message' => 'Добро пожаловать в ToDo-inn! Здесь вы можете организовать свои дела или работу предприятия. Надеемся, мы сработаемся!',
+                ]);
 
                 $acceptedOwnerAccounts = DB::table('corporate_account_members')
                     ->whereRaw('LOWER(email) = ?', [strtolower($data['email'])])
@@ -576,6 +670,9 @@ class AuthController
             throw $exception;
         }
 
+        if ($result['upgrade_failed'] ?? false) {
+            return $this->error(409, 'Аккаунт уже обновлён или больше недоступен. Войдите снова.');
+        }
         $user = $result['user'];
 
         $deliveryFailures = [];
@@ -600,7 +697,11 @@ class AuthController
         }
 
         // The session guard rotates the session ID; also explicitly replace the pre-login CSRF token.
-        if ($user instanceof User) {
+        if (($result['upgraded'] ?? false) && $result['corporate_account_id'] !== null) {
+            Auth::logout();
+            $request->session()->put('corporate_root_account_id', (int) $result['corporate_account_id']);
+            $request->session()->regenerate();
+        } elseif ($user instanceof User) {
             Auth::login($user);
         }
         $request->session()->forget('registration_verified_email');
@@ -613,7 +714,8 @@ class AuthController
                 'name' => $data['organization_name'],
             ],
             'invitation_delivery_failures' => $deliveryFailures,
-        ], 201);
+            'upgraded' => $result['upgraded'] ?? false,
+        ], ($result['upgraded'] ?? false) ? 200 : 201);
     }
 
     private function acceptCorporateInvitation(#[\SensitiveParameter] array $input): JsonResponse
@@ -730,7 +832,16 @@ class AuthController
             return $this->error(422, 'Проверьте формат логина.');
         }
 
-        if (User::query()->whereRaw('LOWER(username) = ?', [strtolower($username)])->exists()) {
+        $upgradeUser = $this->legacyUpgradeUser();
+        if ($upgradeUser !== null && strcasecmp($username, $upgradeUser->username) === 0) {
+            return $this->error(409, 'Для обновления придумайте новый логин.');
+        }
+
+        $usernameQuery = User::query()->whereRaw('LOWER(username) = ?', [strtolower($username)]);
+        if ($upgradeUser !== null) {
+            $usernameQuery->whereKeyNot($upgradeUser->id);
+        }
+        if ($usernameQuery->exists()) {
             return $this->error(409, 'Этот логин уже используется личным аккаунтом.');
         }
         if (DB::table('corporate_accounts')->whereRaw('LOWER(root_username) = ?', [strtolower($username)])->exists()) {
@@ -751,7 +862,7 @@ class AuthController
         }
 
         $email = strtolower(trim($email));
-        $existingAccounts = $this->emailAccountTypes($email);
+        $existingAccounts = $this->emailAccountTypes($email, $this->legacyUpgradeUserId());
         if (in_array($accountType, $existingAccounts, true)) {
             if ($accountType === 'individual') {
                 return $this->error(409, 'Этот e-mail уже привязан к личному аккаунту.');
@@ -762,10 +873,14 @@ class AuthController
         return $this->success(['available' => true]);
     }
 
-    private function emailAccountTypes(string $email): array
+    private function emailAccountTypes(string $email, ?int $excludeUserId = null): array
     {
         $types = [];
-        $userType = User::query()->whereRaw('LOWER(email) = ?', [$email])->value('account_type');
+        $userQuery = User::query()->whereRaw('LOWER(email) = ?', [$email]);
+        if ($excludeUserId !== null) {
+            $userQuery->whereKeyNot($excludeUserId);
+        }
+        $userType = $userQuery->value('account_type');
         if (is_string($userType)) {
             $types[] = $userType === 'individual' ? 'individual' : 'corporate';
         }
@@ -777,6 +892,32 @@ class AuthController
         usort($types, static fn (string $left, string $right): int => ($left === 'individual' ? 0 : 1) <=> ($right === 'individual' ? 0 : 1));
 
         return $types;
+    }
+
+    private function legacyAccountStatus(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        return $this->success(['required' => $user instanceof User && $this->isLegacyAccount($user)]);
+    }
+
+    private function legacyUpgradeUser(): ?User
+    {
+        $user = Auth::user();
+
+        return $user instanceof User && $this->isLegacyAccount($user) ? $user : null;
+    }
+
+    private function legacyUpgradeUserId(): ?int
+    {
+        $user = $this->legacyUpgradeUser();
+
+        return $user === null ? null : (int) $user->id;
+    }
+
+    private function isLegacyAccount(User $user): bool
+    {
+        return (int) $user->registration_version === 1;
     }
 
     private function login(Request $request, #[\SensitiveParameter] array $input): JsonResponse
@@ -899,6 +1040,68 @@ class AuthController
         $request->session()->regenerateToken();
 
         return $this->success(['logged_out' => true]);
+    }
+
+    private function getNotifications(Request $request): JsonResponse
+    {
+        $query = $this->notificationRecipient($request);
+        if ($query instanceof JsonResponse) {
+            return $query;
+        }
+
+        $unreadCount = (clone $query)->whereNull('read_at')->count();
+        $notifications = (clone $query)->orderByDesc('created_at')->orderByDesc('id')->limit(50)->get([
+            'id', 'sender', 'message', 'created_at', 'read_at',
+        ]);
+
+        return $this->success([
+            'notifications' => $notifications->map(fn ($item): array => [
+                'id' => (int) $item->id,
+                'sender' => $item->sender,
+                'message' => $item->message,
+                'created_at' => $item->created_at,
+                'is_read' => $item->read_at !== null,
+            ])->all(),
+            'unread_count' => $unreadCount,
+        ]);
+    }
+
+    private function markNotificationRead(Request $request, array $input): JsonResponse
+    {
+        $id = $input['notification_id'] ?? null;
+        if (!is_int($id) || $id < 1) {
+            return $this->error(422, 'Некорректное уведомление.');
+        }
+
+        $query = $this->notificationRecipient($request);
+        if ($query instanceof JsonResponse) {
+            return $query;
+        }
+
+        $notification = (clone $query)->where('id', $id)->first();
+        if ($notification === null) {
+            return $this->error(404, 'Уведомление не найдено.');
+        }
+        if ($notification->read_at === null) {
+            (clone $query)->where('id', $id)->whereNull('read_at')->update(['read_at' => now()]);
+        }
+
+        return $this->success(['read' => true]);
+    }
+
+    private function notificationRecipient(Request $request): \Illuminate\Database\Query\Builder|JsonResponse
+    {
+        $corporateAccountId = $request->session()->get('corporate_root_account_id');
+        if (is_int($corporateAccountId) && $corporateAccountId > 0) {
+            return DB::table('notifications')->where('corporate_account_id', $corporateAccountId);
+        }
+
+        $userId = $request->user()?->getAuthIdentifier();
+        if (is_int($userId) || (is_string($userId) && ctype_digit($userId))) {
+            return DB::table('notifications')->where('user_id', (int) $userId);
+        }
+
+        return $this->error(401, 'Требуется войти в аккаунт.');
     }
 
     private function publicUser(?User $user): ?array

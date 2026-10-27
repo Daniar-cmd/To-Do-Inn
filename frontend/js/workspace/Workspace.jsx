@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
+import { NotificationsMenu } from '../NotificationsMenu.jsx';
 import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
 
 const accountTypeLabels = {
@@ -298,6 +299,11 @@ export function Workspace() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [csrfToken, setCsrfToken] = useState('');
   const [account, setAccount] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationBusyId, setNotificationBusyId] = useState(null);
+  const [legacyUpdateRequired, setLegacyUpdateRequired] = useState(false);
+  const [legacyNoticeDismissed, setLegacyNoticeDismissed] = useState(false);
   const [workspaceLoadError, setWorkspaceLoadError] = useState('');
   const activeBoardId = useRef(null);
   const workspaceRequestId = useRef(0);
@@ -412,6 +418,9 @@ export function Workspace() {
         setAccount(profileData.profile);
         setThemePreference(profileData.profile.preferred_theme || 'system');
         setCsrfToken(session.csrf_token);
+        sendAuthRequest('legacy_account_status', {}, session.csrf_token)
+          .then((status) => setLegacyUpdateRequired(status.required === true))
+          .catch(() => {});
         setBoard(workspace.board);
         setBoards(workspace.boards);
         setCorporateAccounts(workspace.corporate_accounts || []);
@@ -421,6 +430,29 @@ export function Workspace() {
       })
       .catch((error) => setWorkspaceLoadError(error.message));
   }, []);
+
+  useEffect(() => {
+    if (!csrfToken) return undefined;
+    let active = true;
+    sendAuthRequest('get_notifications', {}, csrfToken)
+      .then((data) => { if (active) setNotifications(data.notifications || []); })
+      .catch((error) => { if (active) setNotificationError(error.message); });
+    return () => { active = false; };
+  }, [csrfToken]);
+
+  async function markNotificationRead(notification) {
+    if (notification.is_read || notificationBusyId !== null) return;
+    setNotificationBusyId(notification.id);
+    setNotificationError('');
+    try {
+      await sendAuthRequest('mark_notification_read', { notification_id: notification.id }, csrfToken);
+      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, is_read: true } : item));
+    } catch (error) {
+      setNotificationError(error.message);
+    } finally {
+      setNotificationBusyId(null);
+    }
+  }
 
   useEffect(() => {
     const query = searchQuery.trim();
@@ -840,22 +872,32 @@ export function Workspace() {
           <input type="search" placeholder="Поиск по всем доскам" aria-label="Поиск по всем доскам" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
         </label>
 
-        <details className="profile-menu">
-          <summary className="profile-menu__trigger" aria-label="Открыть профиль">
-            <span className="profile-menu__avatar" aria-hidden="true">{account.avatar ? <img src={account.avatar} alt="" /> : <UserIcon />}</span>
-            <span className="profile-menu__identity">
-              <span className="profile-menu__name">{account.username}</span>
-              <span className="profile-menu__caption">Личный кабинет</span>
-            </span>
-            <svg className="profile-menu__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>
-          </summary>
-          <div className="profile-menu__panel">
-            <p className="profile-menu__account-type">{accountTypeLabels[account.account_type] || 'Аккаунт'}</p>
-            <button className="profile-menu__settings" type="button" onClick={openProfileSettings}><SettingsIcon /><span>Настройки аккаунта</span></button>
-            <button className="profile-menu__logout" type="button" onClick={handleLogout}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5m5 5H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></svg><span>Выйти из аккаунта</span></button>
-          </div>
-        </details>
+        <div className="workspace-header__right">
+          <NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} />
+
+          <details className="profile-menu">
+            <summary className="profile-menu__trigger" aria-label="Открыть профиль">
+              <span className="profile-menu__avatar" aria-hidden="true">{account.avatar ? <img src={account.avatar} alt="" /> : <UserIcon />}</span>
+              <span className="profile-menu__identity">
+                <span className="profile-menu__name">{account.username}</span>
+                <span className="profile-menu__caption">Личный кабинет</span>
+              </span>
+              <svg className="profile-menu__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>
+            </summary>
+            <div className="profile-menu__panel">
+              <p className="profile-menu__account-type">{accountTypeLabels[account.account_type] || 'Аккаунт'}</p>
+              <button className="profile-menu__settings" type="button" onClick={openProfileSettings}><SettingsIcon /><span>Настройки аккаунта</span></button>
+              <button className="profile-menu__logout" type="button" onClick={handleLogout}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5m5 5H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></svg><span>Выйти из аккаунта</span></button>
+            </div>
+          </details>
+        </div>
       </header>
+      {legacyUpdateRequired && !legacyNoticeDismissed && <aside className="legacy-update-notice" role="status">
+        <button className="legacy-update-notice__close" type="button" aria-label="Закрыть предупреждение" onClick={() => setLegacyNoticeDismissed(true)}>×</button>
+        <h2>Обновите данные!</h2>
+        <p>С 1 ноября 2026 года мы прекращаем поддержку старых аккаунтов. Пройдите регистрацию заново, чтобы сохранить доступ. Ваши доски, списки и задачи останутся на месте.</p>
+        <a className="legacy-update-notice__action" href="/pages/register.html?upgrade=1">Обновить</a>
+      </aside>}
       {mobileMenuOpen && <button className="mobile-menu-backdrop" type="button" aria-label="Закрыть меню фильтров" onClick={() => setMobileMenuOpen(false)} />}
 
       <nav className="board-bar" aria-label="Рабочие доски">
