@@ -304,11 +304,11 @@
 
 .recovery-no-email { align-self: start; margin-top: 8px; }
 
-.login-credentials { display: grid; width: 100%; gap: 14px; padding: 14px; border: 1px solid #e1e7ef; border-radius: 14px; background: #f8fafd; }
+.login-credentials { display: grid; width: 100%; gap: 14px; }
 .login-account-choice { display: grid; width: 100%; gap: 5px; margin-top: -4px; animation: login-account-choice-enter 260ms cubic-bezier(.2, .75, .25, 1) both; }
 @keyframes login-account-choice-enter { from { opacity: 0; transform: translateY(-9px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .login-account-choice { animation: none; } }
-.login-account-choice__label { color: v.$muted; font-size: .82rem; }
+.login-account-choice__label { color: inherit; font-size: .9rem; font-weight: 600; }
 .login-account-choice__slider { display: flex; width: 100%; box-sizing: border-box; align-items: center; gap: 3px; padding: 3px; border: 1px solid #dce4ef; border-radius: 999px; background: #f2f5f9; button { display: inline-flex; min-width: 0; min-height: 32px; flex: 1; align-items: center; justify-content: center; gap: 5px; padding: 5px 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: #5c6d83; font: inherit; font-size: .76rem; font-weight: 600; white-space: nowrap; cursor: pointer; transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease; svg { width: 13px; height: 13px; flex: none; } &:hover { color: v.$blue; } &.is-selected { border-color: #d7e4f5; background: #fff; color: v.$blue-hover; box-shadow: 0 1px 4px rgb(22 43 70 / 10%); } &:focus-visible { outline: 2px solid v.$focus; outline-offset: 2px; } } }
 
 .auth-form__field input.is-invalid {
