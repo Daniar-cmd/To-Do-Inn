@@ -413,8 +413,21 @@ export function Workspace() {
 
         // The auth session intentionally contains only public identity fields; load the full
         // profile here so a persisted avatar appears in the header after page reloads.
-        const [profileData, workspace] = await Promise.all([getProfile(), getWorkspace()]);
+        const [profileData, defaultWorkspace] = await Promise.all([getProfile(), getWorkspace()]);
+        const lastBoardStorageKey = `todo-inn-last-board-${session.user.id}`;
+        let rememberedBoardId = null;
+        try {
+          rememberedBoardId = window.localStorage.getItem(lastBoardStorageKey);
+        } catch { /* Restore the default board when browser storage is unavailable. */ }
+        const rememberedBoardExists = rememberedBoardId
+          && defaultWorkspace.boards.some((item) => String(item.id) === rememberedBoardId);
+        const workspace = rememberedBoardExists && String(defaultWorkspace.board.id) !== rememberedBoardId
+          ? await getWorkspace(rememberedBoardId)
+          : defaultWorkspace;
         activeBoardId.current = String(workspace.board.id);
+        try {
+          window.localStorage.setItem(lastBoardStorageKey, String(workspace.board.id));
+        } catch { /* Board selection remains active for this page. */ }
         setAccount(profileData.profile);
         setThemePreference(profileData.profile.preferred_theme || 'system');
         setCsrfToken(session.csrf_token);
@@ -493,6 +506,9 @@ export function Workspace() {
       const workspace = await getWorkspace(boardId);
       if (requestId !== workspaceRequestId.current) return;
       setBoard(workspace.board);
+      try {
+        if (account?.id) window.localStorage.setItem(`todo-inn-last-board-${account.id}`, String(workspace.board.id));
+      } catch { /* Board selection remains active for this page. */ }
       setBoards(workspace.boards);
       setCorporateAccounts(workspace.corporate_accounts || []);
       setFlags(workspace.flags);
@@ -540,9 +556,13 @@ export function Workspace() {
         ...(boardType === 'corporate' ? { corporate_account_id: Number(boardCorporateAccountId) } : {}),
       }, csrfToken);
       const workspace = await getWorkspace(createdBoard.id);
+      activeBoardId.current = String(workspace.board.id);
       setBoards(workspace.boards);
       setCorporateAccounts(workspace.corporate_accounts || []);
       setBoard(workspace.board);
+      try {
+        if (account?.id) window.localStorage.setItem(`todo-inn-last-board-${account.id}`, String(workspace.board.id));
+      } catch { /* Board selection remains active for this page. */ }
       setFlags(workspace.flags);
       setLists(workspace.lists);
       setTasks(workspace.tasks || []);
@@ -633,7 +653,11 @@ export function Workspace() {
       setSearchQuery('');
       if (board.id === boardDeleteTarget.id) {
         const workspace = await getWorkspace(replacementBoardId);
+        activeBoardId.current = String(workspace.board.id);
         setBoard(workspace.board);
+        try {
+          if (account?.id) window.localStorage.setItem(`todo-inn-last-board-${account.id}`, String(workspace.board.id));
+        } catch { /* Board selection remains active for this page. */ }
         setBoards(workspace.boards);
         setCorporateAccounts(workspace.corporate_accounts || []);
         setFlags(workspace.flags);
