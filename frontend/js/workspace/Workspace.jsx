@@ -271,6 +271,9 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated, onTo
         <time dateTime={list.created_at}>{formatListCreatedAt(list.created_at)}</time>
       </div>
       <div className="task-list-card__actions">
+      {dragHandle?.onOpen && <button className="task-list-card__open-button" type="button" aria-label={`Открыть список «${list.name}»`} title="Открыть список" onClick={dragHandle.onOpen}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><path d="M8 8h8v8H8z"/></svg>
+      </button>}
       <button className={`task-list-card__pin-button${list.is_pinned ? ' is-pinned' : ''}`} type="button" aria-label={list.is_pinned ? 'Открепить список' : 'Закрепить список'} aria-pressed={list.is_pinned} title={list.is_pinned ? 'Открепить список' : 'Закрепить список'} disabled={pinning || dragHandle?.locked} onClick={handleTogglePin}>
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l-1 5 3 3v2H6v-2l3-3-1-5Z"/><path d="M12 13v8"/></svg>
       </button>

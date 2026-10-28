@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const source = await readFile(new URL('../../frontend/js/workspace/listGrid.js', import.meta.url), 'utf8');
-const { findGridTarget, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { adjacentLists, findGridTarget, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const lists = [
   { id: 1, board_id: 10, is_pinned: true },
@@ -18,6 +18,15 @@ const cells = [
   { ...lists[2], left: 0, top: 270, right: 300, bottom: 520 },
   { ...lists[3], left: 320, top: 270, right: 620, bottom: 520 },
 ];
+
+test('focused list has only its actual neighbors, wrapping at the ends', () => {
+  const items = Array.from({ length: 7 }, (_, index) => ({ id: index + 1 }));
+  assert.deepEqual([adjacentLists(items, 4).previous.id, adjacentLists(items, 4).next.id], [3, 5]);
+  assert.deepEqual([adjacentLists(items, 1).previous.id, adjacentLists(items, 1).next.id], [7, 2]);
+  assert.deepEqual([adjacentLists(items, 7).previous.id, adjacentLists(items, 7).next.id], [6, 1]);
+  assert.deepEqual(adjacentLists(items, 99), { previous: null, next: null });
+  assert.deepEqual(adjacentLists([{ id: 1 }], 1), { previous: null, next: null });
+});
 
 test('moving to a later slot shifts every intervening list one place left', () => {
   const result = moveListToSlot(lists, 2, 4);

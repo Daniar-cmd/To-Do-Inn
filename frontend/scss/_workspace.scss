@@ -790,7 +790,7 @@
   &__flag-mark::after { position: absolute; z-index: 50; top: calc(100% + 7px); left: 50%; width: max-content; max-width: 200px; padding: 6px 9px; border: 1px solid var(--workspace-border); border-radius: 6px; background: var(--workspace-surface); box-shadow: 0 5px 14px rgb(20 35 60 / 14%); color: var(--workspace-text); content: attr(data-tooltip); font-size: .72rem; font-weight: 550; line-height: 1.3; opacity: 0; pointer-events: none; transform: translate(-50%, -3px); transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease; visibility: hidden; }
   &__flag-mark:hover::after, &__flag-mark:focus-visible::after { opacity: 1; transform: translate(-50%, 0); visibility: visible; }
   &__actions { display: flex; align-items: center; gap: 4px; }
-  &__edit-button, &__pin-button { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--workspace-muted); cursor: pointer; svg { width: 17px; height: 17px; } &:hover, &:focus-visible { background: var(--workspace-hover); color: var(--workspace-text); } &:disabled { opacity: .55; cursor: wait; } }
+  &__edit-button, &__pin-button, &__open-button { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--workspace-muted); cursor: pointer; svg { width: 17px; height: 17px; } &:hover, &:focus-visible { background: var(--workspace-hover); color: var(--workspace-text); } &:disabled { opacity: .55; cursor: wait; } }
   &__pin-button svg { transform: rotate(45deg); }
   &__pin-button.is-pinned { color: var(--card-accent); }
   &__delete-button:hover, &__delete-button:focus-visible { color: #b54747; }
@@ -850,6 +850,58 @@
   &__slot.is-drag-source > .task-list-card { box-shadow: 0 18px 45px rgb(10 25 45 / 24%); pointer-events: none; will-change: transform; }
   &.is-dragging > .list-grid__slot:not(.is-drag-source) > .task-list-card { pointer-events: none; }
   &.is-dragging .task-list-card__drag-handle { visibility: visible; opacity: 1; }
+}
+
+@keyframes list-focus-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes list-focus-card-in { from { opacity: 0; transform: translate(-50%, -47%) scale(.975); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes list-focus-slide-in-next { from { opacity: .45; transform: translate(calc(-50% + 100px), -50%) scale(.94); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes list-focus-slide-in-previous { from { opacity: .45; transform: translate(calc(-50% - 100px), -50%) scale(.94); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes list-focus-slide-out-next { from { opacity: 1; transform: translate(-50%, -50%) scale(1); } to { opacity: 0; transform: translate(calc(-50% - 100px), -50%) scale(.94); } }
+@keyframes list-focus-slide-out-previous { from { opacity: 1; transform: translate(-50%, -50%) scale(1); } to { opacity: 0; transform: translate(calc(-50% + 100px), -50%) scale(.94); } }
+@keyframes list-focus-peek-in { from { opacity: 0; transform: translateY(-50%) scale(.9); } to { opacity: .65; transform: translateY(-50%) scale(.94); } }
+
+.list-focus-overlay.workspace-shell {
+  position: fixed;
+  z-index: 1300;
+  inset: 0;
+  display: block;
+  min-height: 0;
+  background: transparent;
+}
+
+.list-focus-overlay {
+  &__backdrop { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: rgb(8 14 24 / 66%); backdrop-filter: blur(3px); cursor: default; animation: list-focus-backdrop-in 220ms ease both; }
+  &__peek { position: absolute; top: 50%; width: min(360px, 40vw); max-height: 60dvh; overflow: hidden; opacity: .65; filter: blur(2px) saturate(.75); pointer-events: none; transform: translateY(-50%) scale(.94); animation: list-focus-peek-in 260ms ease both; }
+  &__peek.is-previous { left: -220px; }
+  &__peek.is-next { right: -220px; }
+  &__peek > .task-list-card { min-height: 240px; max-height: 60dvh; overflow: hidden; padding-bottom: 22px; box-shadow: 0 18px 50px rgb(0 0 0 / 20%); }
+  &__dialog { position: absolute; top: 50%; left: 50%; width: min(920px, calc(100vw - 220px)); max-height: min(88dvh, 1000px); transform: translate(-50%, -50%); }
+  &__dialog.is-opening { animation: list-focus-card-in 260ms cubic-bezier(.2,.8,.2,1) both; }
+  &__dialog.is-entering-next { animation: list-focus-slide-in-next 340ms cubic-bezier(.22,1,.36,1) both; }
+  &__dialog.is-entering-previous { animation: list-focus-slide-in-previous 340ms cubic-bezier(.22,1,.36,1) both; }
+  &__dialog.is-leaving-next { pointer-events: none; animation: list-focus-slide-out-next 340ms cubic-bezier(.22,1,.36,1) both; }
+  &__dialog.is-leaving-previous { pointer-events: none; animation: list-focus-slide-out-previous 340ms cubic-bezier(.22,1,.36,1) both; }
+  &__dialog > .task-list-card { max-height: min(88dvh, 1000px); overflow: auto; padding-bottom: 4px; box-shadow: 0 24px 80px rgb(0 0 0 / 30%); transform: none; }
+  &__dialog > .task-list-card:hover { transform: none; }
+  &__navigation { position: absolute; z-index: 3; inset: 50% 12px auto; display: flex; justify-content: space-between; pointer-events: none; transform: translateY(-50%); button { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; border: 1px solid rgb(255 255 255 / 35%); border-radius: 50%; background: rgb(20 28 40 / 84%); color: #fff; cursor: pointer; pointer-events: auto; transition: background-color 150ms ease, transform 150ms ease; svg { width: 22px; height: 22px; } &:hover, &:focus-visible { background: rgb(20 28 40 / 98%); transform: scale(1.07); } } }
+  &__close { position: absolute; z-index: 2; top: -46px; right: 0; display: grid; width: 38px; height: 38px; place-items: center; padding: 0; border: 1px solid rgb(255 255 255 / 28%); border-radius: 50%; background: rgb(20 28 40 / 72%); color: #fff; cursor: pointer; transition: background-color 150ms ease, transform 150ms ease; svg { display: block; width: 18px; height: 18px; } &:hover, &:focus-visible { background: rgb(20 28 40 / 92%); transform: scale(1.05); } }
+}
+
+@media (max-width: 600px) {
+  .list-focus-overlay {
+    &__dialog { width: calc(100vw - 28px); max-height: 88dvh; }
+    &__dialog > .task-list-card { max-height: 88dvh; padding-inline: 17px; }
+    &__dialog > .task-list-card .task-list-card__completed { margin-inline: -17px; padding-inline: 17px; }
+    &__close { top: -42px; }
+    &__navigation { inset-inline: 6px; }
+  }
+}
+
+@media (max-width: 900px) {
+  .list-focus-overlay {
+    &__peek.is-previous { left: calc(min(360px, 40vw) * -.7); }
+    &__peek.is-next { right: calc(min(360px, 40vw) * -.7); }
+  }
 }
 
 .list-grid-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -1535,6 +1587,8 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .workspace-search,
   .list-creator form,
   .task-list-card,
+  .list-focus-overlay__backdrop,
+  .list-focus-overlay__dialog,
   .task-list-card__add,
   .task-list-card__add button,
   .board-form-dialog__field input,
@@ -1545,6 +1599,10 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .profile-settings-dialog__avatar-actions button {
     transition: none;
   }
+
+  .list-focus-overlay__backdrop,
+  .list-focus-overlay__dialog,
+  .list-focus-overlay__peek { animation: none !important; }
 
   .board-bar .board-tab-group:hover,
   .board-bar .board-tab-group:focus-within,

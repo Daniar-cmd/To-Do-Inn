@@ -9,6 +9,15 @@ export function moveListToSlot(lists, sourceId, targetId) {
   return result;
 }
 
+export function adjacentLists(lists, focusedId) {
+  const index = lists.findIndex((list) => list.id === focusedId);
+  if (index < 0 || lists.length < 2) return { previous: null, next: null };
+  return {
+    previous: lists[(index - 1 + lists.length) % lists.length],
+    next: lists[(index + 1) % lists.length],
+  };
+}
+
 // Use stable cell rectangles, not the moving/animated cards, including the gaps.
 export function findGridTarget(cells, bounds, x, y) {
   if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return null;
