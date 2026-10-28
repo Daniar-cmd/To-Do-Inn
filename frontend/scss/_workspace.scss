@@ -1062,7 +1062,7 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   }
 }
 
-.list-creator:has(.flag-picker[open], .list-date-picker[open], .list-extra-picker[open]) { z-index: 30; }
+.list-creator:has(.flag-picker[open], .list-date-picker[open], .list-description-picker[open]) { z-index: 30; }
 
 .list-option-button {
   display: flex;
@@ -1100,17 +1100,16 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
 
 .list-option-button:disabled { opacity: .58; cursor: not-allowed; }
 .list-option-button:disabled:hover { transform: none; box-shadow: none; }
-.list-creator__parameter { justify-content: flex-start; }
-
-.list-extra-picker {
+.list-description-picker {
   position: relative;
   flex: none;
 
-  &__toggle { width: 36px; min-width: 36px; flex: none; justify-content: center; padding: 0; border-color: #3478d4; background: #3478d4; color: #fff; &:hover, &:focus-visible { border-color: #2867bd; background: #2867bd; color: #fff; } svg { width: 19px; height: 19px; transition: transform 160ms ease; } }
-  &[open] &__toggle svg { transform: rotate(45deg); }
-  &__menu { position: absolute; z-index: 35; top: calc(100% + 8px); right: auto; left: 0; display: grid; width: 190px; gap: 2px; padding: 6px; border: 1px solid var(--workspace-border); border-radius: 10px; background: var(--workspace-surface); box-shadow: 0 8px 24px rgb(13 27 48 / 12%); animation: list-options-in 160ms ease both; }
-  &__item { width: 100%; min-height: 40px; justify-content: flex-start; gap: 9px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--workspace-text); font-size: .8rem; opacity: 1 !important; &:hover, &:focus-visible { background: var(--workspace-hover); } &:disabled:hover { transform: none; box-shadow: none; } }
-  &__item svg { width: 17px; height: 17px; flex: none; color: var(--workspace-muted); }
+  > summary { width: 36px; min-width: 36px; padding: 0; }
+  > summary::-webkit-details-marker { display: none; }
+  &[open] > summary { background: var(--workspace-hover); color: var(--workspace-text); }
+
+  &__panel { position: absolute; z-index: 24; top: calc(100% + 8px); left: 0; width: min(320px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--workspace-border); border-radius: 10px; background: var(--workspace-surface); box-shadow: 0 12px 28px rgb(13 27 48 / 15%); animation: list-options-in 160ms ease both; }
+  &__panel textarea { display: block; width: 100%; min-height: 104px; resize: none; padding: 8px 9px; border: 0; border-radius: 6px; outline: 0; background: var(--workspace-bg); color: var(--workspace-text); font: inherit; font-size: .82rem; box-shadow: none; }
 }
 
 .task-list-card__edit-toolbar .list-option-button,
@@ -1619,7 +1618,6 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .list-creator__toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .list-creator__toolbar > .flag-picker { min-width: 0; flex: 1 1 130px; }
   .list-creator__toolbar > .list-date-picker { min-width: 0; flex: 0 0 auto; }
-  .list-creator__toolbar > .list-extra-picker { margin-left: 0; }
   .list-date-picker[open] > summary { width: min(112px, 100%); }
   .list-date-picker__panel { right: 0; left: auto; }
   .list-date-picker > summary { overflow: hidden; }
