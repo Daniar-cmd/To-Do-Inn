@@ -975,7 +975,7 @@ export function Workspace() {
             <form className={expanded ? 'is-expanded' : ''} onSubmit={handleCreateList}>
               <label className="list-creator__name-field" htmlFor="new-list-name">
                 <PlusIcon />
-                <input id="new-list-name" name="name" type="text" maxLength="80" placeholder="Новый список" autoComplete="off" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
+                <input id="new-list-name" name="todo-list-title" type="text" maxLength="80" placeholder="Новый список" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck="false" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
               </label>
 
               {expanded && (
@@ -987,8 +987,8 @@ export function Workspace() {
 
                     <details className="flag-picker" open={flagPickerOpen} onToggle={(event) => setFlagPickerOpen(event.currentTarget.open)}>
                       <summary className="list-option-button" aria-label="Назначить флаг" title="Назначить флаг">
-                        {selectedFlag ? <FlagIcon color={selectedFlag.color} /> : <span className="flag-picker__empty-icon" aria-hidden="true" />}
-                        <span>{newFlagName ? 'Новый флаг' : selectedFlag?.name || 'Флаг'}</span>
+                        <FlagIcon color={selectedFlag?.color || 'blue'} />
+                        <span className="flag-picker__selected-label">{newFlagName ? 'Новый флаг' : selectedFlag?.name || 'Флаг'}</span>
                       </summary>
                       <div className="flag-picker__panel">
                         <p className="flag-picker__title">Выберите флаг</p>
