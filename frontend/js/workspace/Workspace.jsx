@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
 import { NotificationsMenu } from '../NotificationsMenu.jsx';
 import { ListGrid } from './ListGrid.jsx';
+import { ListDatePicker } from './ListDatePicker.jsx';
+import { formatListDueDate } from './listDate.js';
 import { moveListToSlot } from './listGrid.js';
 import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
 
@@ -17,6 +19,7 @@ const themes = [
   ['green', 'Зелёная тема'],
   ['amber', 'Янтарная тема'],
   ['rose', 'Розовая тема'],
+  ['sky', 'Голубая тема'],
 ];
 
 function formatListCreatedAt(value) {
@@ -68,6 +71,13 @@ function ThemeSwitch({ theme, onChange }) {
 
 function FlagIcon({ color = 'blue' }) {
   return <span className={`sidebar-flag__icon is-${color}`} aria-hidden="true">⚑</span>;
+}
+
+function UpcomingListOption({ label, children, ariaLabel = label }) {
+  return <button className="list-option-button list-creator__parameter list-extra-picker__item" type="button" aria-label={ariaLabel}
+    title={`${label} — добавим позже`} disabled>
+    {children}<span>{label}</span>
+  </button>;
 }
 
 function completedTasksLabel(count) {
@@ -266,9 +276,8 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated, onTo
     <header className="task-list-card__header">
       {dragHandle && !editing && <button className={`task-list-card__drag-handle${list.is_pinned ? ' is-disabled' : ''}`} type="button" aria-label={list.is_pinned ? 'Список закреплён' : `Переместить список «${list.name}»`} title={list.is_pinned ? 'Сначала открепите список' : 'Перетащить список'} disabled={dragHandle.disabled} aria-disabled={list.is_pinned} onPointerDown={dragHandle.onPointerDown} onDragStart={(event) => event.preventDefault()}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>}
       <div className="task-list-card__created">
-        {list.is_important && <svg className="task-list-card__important" aria-label="Важный список" role="img" viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.4l6.2-.9L12 2.8Z" /></svg>}
-        {list.flag && <span className={`task-list-card__flag-mark is-${list.flag.color}`} data-tooltip={list.flag.name} title={list.flag.name} aria-label={`Флаг: ${list.flag.name}`} role="img" tabIndex="0"><FlagIcon color={list.flag.color} /></span>}
-        <time dateTime={list.created_at}>{formatListCreatedAt(list.created_at)}</time>
+          {list.is_important && <span className="task-list-card__important-badge" role="img" aria-label="Важный список"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.8 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3-1.1-6.3L3 9.4l6.2-.9L12 2.8Z" /></svg></span>}
+         <time dateTime={list.created_at}>{formatListCreatedAt(list.created_at)}</time>
       </div>
       <div className="task-list-card__actions">
       {dragHandle?.onOpen && <button className="task-list-card__open-button" type="button" aria-label={`Открыть список «${list.name}»`} title="Открыть список" onClick={dragHandle.onOpen}>
@@ -296,10 +305,10 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated, onTo
       <button type="button" className="task-list-card__delete-list" onClick={() => setConfirmingDelete(true)}>Удалить список</button>
       <div className="task-list-card__edit-actions"><button type="button" className="task-list-card__cancel" onClick={() => { setEditing(false); setName(list.name); setDescription(list.description || ''); setCardTheme(list.theme); setFlagId(list.flag?.id || ''); setNewFlagName(''); setImportant(list.is_important); }}>Отмена</button><button type="submit">Сохранить</button></div>
     </form> : <>
-      <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{description && <p className="task-list-card__description">{description}</p>}</div>
-      <div className="task-list-card__section-label">ЗАДАЧИ</div>
-      <ul className="task-list-card__tasks">{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>
-      <form className="task-list-card__add" onSubmit={addTask}><input aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} onChange={(event) => setTaskName(event.target.value)} /><button type="submit" aria-label="Добавить задачу">Добавить</button></form>
+       <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{(list.flag || list.due_date) && <div className="task-list-card__meta-tags">{list.flag && <span className={`task-list-card__flag-tag is-${list.flag.color}`}>{list.flag.name}</span>}{list.due_date && <time className="task-list-card__due-date" dateTime={list.due_date}>{formatListDueDate(list.due_date)}</time>}</div>}{description && <p className="task-list-card__description">{description}</p>}</div>
+       <form className="task-list-card__add" onSubmit={addTask}><input aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} onChange={(event) => setTaskName(event.target.value)} /><button type="submit" aria-label="Добавить задачу">Добавить</button></form>
+       {pending.length > 0 && <div className="task-list-card__section-label">ЗАДАЧИ</div>}
+       <ul className={`task-list-card__tasks${completed.length === 0 ? ' has-no-completed' : ''}`}>{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>
       {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>}</footer>}
       {error && <p role="alert" className="task-list-card__error">{error}</p>}
     </>}
@@ -386,6 +395,8 @@ export function Workspace() {
   const [selectedFlagId, setSelectedFlagId] = useState(null);
   const [newFlagName, setNewFlagName] = useState('');
   const [flagPickerOpen, setFlagPickerOpen] = useState(false);
+  const [listDate, setListDate] = useState(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [creatingFlag, setCreatingFlag] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [saving, setSaving] = useState(false);
@@ -797,6 +808,20 @@ export function Workspace() {
     if (!hasName) setFeedback('');
   }
 
+  function cancelListCreation() {
+    if (saving) return;
+    setName('');
+    setExpanded(false);
+    setImportant(false);
+    setSelectedTheme('blue');
+    setSelectedFlagId(null);
+    setNewFlagName('');
+    setFlagPickerOpen(false);
+    setListDate(null);
+    setDatePickerOpen(false);
+    setFeedback('');
+  }
+
   async function handleCreateList(event) {
     event.preventDefault();
     if (!name.trim()) {
@@ -814,6 +839,7 @@ export function Workspace() {
         theme: selectedTheme,
         flag_id: selectedFlagId,
         new_flag_name: newFlagName.trim(),
+        due_date: listDate,
       }, csrfToken);
 
       if (list.flag) {
@@ -829,6 +855,8 @@ export function Workspace() {
       setSelectedFlagId(null);
       setNewFlagName('');
       setFlagPickerOpen(false);
+      setListDate(null);
+      setDatePickerOpen(false);
       setFeedback('');
       await refreshBoardData(board.id);
     } catch (error) {
@@ -1039,20 +1067,34 @@ export function Workspace() {
           {!searchQuery.trim() && filter === 'planned' ? <div className="workspace-placeholder" role="status">Эта функция пока в разработке</div> : <>
           {!searchQuery.trim() && <section className="list-creator" aria-label="Создать список">
             <form className={expanded ? 'is-expanded' : ''} onSubmit={handleCreateList}>
-              <label className="list-creator__name-field" htmlFor="new-list-name">
-                <PlusIcon />
-                <input id="new-list-name" name="todo-list-title" type="text" maxLength="80" placeholder="Новый список" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck="false" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
-              </label>
+              <div className="list-creator__name-row">
+                <button className="list-creator__cancel" type="button" aria-label={expanded ? 'Отменить создание списка' : 'Ввести название нового списка'} title={expanded ? 'Отменить создание' : 'Новый список'} disabled={saving} onClick={() => expanded ? cancelListCreation() : document.getElementById('new-list-name')?.focus()}><PlusIcon /></button>
+                <label className="list-creator__name-field" htmlFor="new-list-name">
+                  <input id="new-list-name" name="todo-list-title" type="text" maxLength="80" placeholder="Новый список" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck="false" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
+                </label>
+                {expanded && <button className="list-creator__submit" type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Создать'}</button>}
+              </div>
 
               {expanded && (
                 <div className="list-creator__options">
                   <div className="list-creator__toolbar">
+                    <details className="list-extra-picker">
+                      <summary className="list-option-button list-extra-picker__toggle" aria-label="Дополнительные параметры списка" title="Дополнительные параметры">
+                        <PlusIcon />
+                      </summary>
+                      <div className="list-extra-picker__menu" aria-label="Дополнительные параметры">
+                        <UpcomingListOption label="Описание" ariaLabel="Описание списка">
+                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 5h14M5 10h14M5 15h9M5 19h6"/></svg>
+                        </UpcomingListOption>
+                      </div>
+                    </details>
+
                     <button className={`list-option-button${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} aria-label={important ? 'Убрать важность списка' : 'Сделать список важным'} title="Важный список" onClick={() => setImportant((current) => !current)}>
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
                     </button>
 
                     <details className="flag-picker" open={flagPickerOpen} onToggle={(event) => setFlagPickerOpen(event.currentTarget.open)}>
-                      <summary className="list-option-button" aria-label="Назначить флаг" title="Назначить флаг">
+                      <summary className={`list-option-button${selectedFlag || newFlagName.trim() ? ' is-selected' : ''}`} aria-label="Назначить флаг" title="Назначить флаг">
                         <FlagIcon color={selectedFlag?.color || 'blue'} />
                         <span className="flag-picker__selected-label">{newFlagName ? 'Новый флаг' : selectedFlag?.name || 'Флаг'}</span>
                       </summary>
@@ -1071,13 +1113,14 @@ export function Workspace() {
                       </div>
                     </details>
 
+                    <ListDatePicker value={listDate} open={datePickerOpen} onOpenChange={setDatePickerOpen} onChange={setListDate} />
+
                     <div className="list-theme-picker" role="group" aria-label="Цвет темы списка">
                       {themes.map(([value, label]) => (
                         <button className={`list-theme-swatch${selectedTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={selectedTheme === value} key={value} onClick={() => setSelectedTheme(value)} />
                       ))}
                     </div>
 
-                    <button className="list-creator__submit" type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Создать'}</button>
                   </div>
                   {feedback && <p className="list-creator__feedback" role="alert">{feedback}</p>}
                 </div>

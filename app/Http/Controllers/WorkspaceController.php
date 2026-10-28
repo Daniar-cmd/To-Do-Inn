@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Mail;
 
 class WorkspaceController
 {
-    private const THEMES = ['blue', 'violet', 'green', 'amber', 'rose'];
+    private const THEMES = ['blue', 'violet', 'green', 'amber', 'rose', 'sky'];
     private const BOARD_TYPES = ['personal', 'community', 'corporate'];
 
     public function __invoke(Request $request): JsonResponse
@@ -80,7 +80,7 @@ class WorkspaceController
             $join->on('flags.id', '=', 'lists.flag_id')->on('flags.user_id', '=', 'lists.user_id')
                 ->on('flags.board_id', '=', 'lists.board_id');
         })->whereIn('lists.board_id', $boardIds)->select([
-            'lists.id', 'lists.board_id', 'lists.name', 'lists.description', 'lists.created_at',
+            'lists.id', 'lists.board_id', 'lists.name', 'lists.description', 'lists.created_at', 'lists.due_date',
             'lists.is_important', 'lists.theme', 'lists.is_pinned', 'lists.sort_order',
             'lists.flag_id', 'flags.name as flag_name', 'flags.color as flag_color',
         ]);
@@ -216,6 +216,8 @@ class WorkspaceController
         $important = $input['is_important'] ?? false;
         $flagId = $input['flag_id'] ?? null;
         $newFlag = $input['new_flag_name'] ?? '';
+        $hasDueDate = array_key_exists('due_date', $input);
+        $dueDate = $input['due_date'] ?? null;
         if ($update) {
             if ($id === false || !is_string($name) || trim($name) === '' || mb_strlen(trim($name)) > 80
                 || !is_string($description) || mb_strlen($description) > 2000
@@ -245,6 +247,14 @@ class WorkspaceController
         }
         if ($newFlag !== '' && $flagId !== null) {
             $this->fail(422, 'Выберите существующий флаг или создайте новый.');
+        }
+        if ($hasDueDate && $dueDate !== null) {
+            if (!is_string($dueDate) || !preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/D', $dueDate)
+                || $dueDate < '1000-01-01'
+                || (\DateTimeImmutable::createFromFormat('!Y-m-d', $dueDate)?->format('Y-m-d') !== $dueDate)
+                || $dueDate < today()->toDateString()) {
+                $this->fail(422, 'Выберите корректную дату, не раньше сегодняшнего дня.');
+            }
         }
         $previous = null;
         $boardOwnerId = $userId;
@@ -280,6 +290,9 @@ class WorkspaceController
         // create_list historically ignores the description field; only update_list saves it.
         $fields = ['name' => trim($name), 'description' => $update ? trim($description) : '',
             'theme' => $theme, 'flag_id' => $flagId, 'is_important' => $important];
+        if (!$update || $hasDueDate) {
+            $fields['due_date'] = $dueDate;
+        }
         if ($update) {
             DB::table('task_lists')->where('id', $id)->where('user_id', $boardOwnerId)->update($fields);
             if ($previous->flag_id !== null && (int) $previous->flag_id !== $flagId) {
@@ -302,7 +315,8 @@ class WorkspaceController
         }
 
         return $this->success(['list' => ['id' => $id, 'name' => $fields['name'], 'is_important' => $important,
-            'theme' => $theme, 'flag' => $flag === null ? null : $this->flagData($flag, false)]], 201);
+            'theme' => $theme, 'due_date' => $dueDate,
+            'flag' => $flag === null ? null : $this->flagData($flag, false)]], 201);
     }
 
     private function setListPinned(array $input, int $userId): JsonResponse
@@ -648,7 +662,8 @@ class WorkspaceController
     private function listData(object $list): array
     {
         return ['id' => (int) $list->id, 'board_id' => (int) $list->board_id, 'name' => $list->name,
-            'description' => $list->description, 'created_at' => $list->created_at, 'is_important' => (bool) $list->is_important,
+            'description' => $list->description, 'created_at' => $list->created_at, 'due_date' => $list->due_date,
+            'is_important' => (bool) $list->is_important,
             'is_pinned' => (bool) $list->is_pinned, 'sort_order' => (int) $list->sort_order,
             'theme' => $list->theme, 'flag' => $list->flag_id === null ? null
                 : ['id' => (int) $list->flag_id, 'name' => $list->flag_name, 'color' => $list->flag_color]];

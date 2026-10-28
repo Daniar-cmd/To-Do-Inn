@@ -167,7 +167,8 @@ class WorkspaceTest extends DatabaseTestCase
         $id = $list->json('data.list.id');
         $flag = $list->json('data.list.flag.id');
         $list->assertExactJson(['success' => true, 'data' => ['list' => ['id' => $id, 'name' => 'One',
-            'is_important' => true, 'theme' => 'rose', 'flag' => ['id' => $flag, 'name' => 'Flag', 'color' => 'blue']]]]);
+            'is_important' => true, 'theme' => 'rose', 'due_date' => null,
+            'flag' => ['id' => $flag, 'name' => 'Flag', 'color' => 'blue']]]]);
         $task = $this->postWorkspace(['action' => 'create_task', 'list_id' => $id, 'title' => ' First '])->assertCreated()->json('data.task.id');
         $second = $this->postWorkspace(['action' => 'create_task', 'list_id' => $id, 'title' => 'Second'])->assertCreated()->json('data.task.id');
         $response = $this->request()->assertOk()->assertJsonPath('data.lists.0.description', '')
@@ -183,6 +184,53 @@ class WorkspaceTest extends DatabaseTestCase
                 'flag' => ['id' => $flag, 'board_id' => $this->board, 'name' => 'Flag', 'color' => 'blue']]]);
         $this->request()->assertJsonPath('data.lists.0.description', 'New description')
             ->assertJsonPath('data.lists.0.theme', 'blue')->assertJsonPath('data.lists.0.is_important', false);
+    }
+
+    public function test_sky_theme_is_accepted_and_persisted_for_a_list(): void
+    {
+        $created = $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board,
+            'name' => 'Sky themed list', 'theme' => 'sky'])->assertCreated()->assertJsonPath('data.list.theme', 'sky');
+        $id = $created->json('data.list.id');
+        $this->assertDatabaseHas('task_lists', ['id' => $id, 'theme' => 'sky']);
+
+        $this->postWorkspace(['action' => 'update_list', 'list_id' => $id,
+            'name' => 'Sky themed list', 'theme' => 'sky'])->assertOk();
+        $this->request()->assertJsonPath('data.lists.0.theme', 'sky');
+    }
+
+    public function test_list_date_is_saved_returned_in_board_and_search_and_preserved_by_ordinary_edits(): void
+    {
+        $dueDate = today()->addDays(7)->toDateString();
+        $created = $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board,
+            'name' => 'Dated list', 'due_date' => $dueDate])->assertCreated()->assertJsonPath('data.list.due_date', $dueDate);
+        $id = $created->json('data.list.id');
+        $this->assertDatabaseHas('task_lists', ['id' => $id, 'due_date' => $dueDate]);
+        $this->request()->assertJsonPath('data.lists.0.due_date', $dueDate);
+        $this->request(query: '?search=Dated')->assertJsonPath('data.results.0.due_date', $dueDate);
+
+        $this->postWorkspace(['action' => 'update_list', 'list_id' => $id, 'name' => 'Dated list updated'])->assertOk();
+        $this->assertDatabaseHas('task_lists', ['id' => $id, 'due_date' => $dueDate]);
+        $this->postWorkspace(['action' => 'update_list', 'list_id' => $id,
+            'name' => 'Dated list updated', 'due_date' => null])->assertOk();
+        $this->request()->assertJsonPath('data.lists.0.due_date', null);
+        $this->assertDatabaseHas('task_lists', ['id' => $id, 'due_date' => null]);
+    }
+
+    public function test_invalid_and_past_list_dates_are_rejected_without_changing_any_list(): void
+    {
+        $id = $this->list($this->user->id, $this->board, 'Original');
+        $before = $this->state();
+        foreach (['2026-02-30', '2027-13-01', '2027-1-01', '27-10-28', '', [], 20271028,
+            today()->subDay()->toDateString()] as $invalid) {
+            $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board,
+                'name' => 'Invalid', 'due_date' => $invalid])->assertUnprocessable();
+            $this->postWorkspace(['action' => 'update_list', 'list_id' => $id,
+                'name' => 'Changed', 'due_date' => $invalid])->assertUnprocessable();
+        }
+        $this->assertSame($before, $this->state());
+        $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->foreignBoard,
+            'name' => 'Blocked', 'due_date' => today()->toDateString()])->assertNotFound();
+        $this->assertSame($before, $this->state());
     }
 
     public function test_flags_can_be_created_independently_and_are_scoped_to_an_owned_board(): void

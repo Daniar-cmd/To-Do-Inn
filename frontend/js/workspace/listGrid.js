@@ -35,13 +35,15 @@ export function findGridTarget(cells, bounds, x, y) {
   return nearest && !nearest.is_pinned ? nearest.id : null;
 }
 
-// Use the actual responsive column count. Heights affect vertical packing,
-// while insertion order determines the column; the number of rows is unlimited.
-export function masonrySlots(heights, columns, rowHeight, gap) {
+// Keep the visual gap nearly constant by using a fine grid track step.
+// Heights affect vertical packing; insertion order determines the column.
+export function masonrySlots(heights, columns, rowHeight, trackGap, cardGap = 18) {
   const bottoms = Array(columns).fill(1);
   return heights.map((height, index) => {
     const column = index % columns;
-    const span = Math.max(1, Math.ceil((height + gap) / (rowHeight + gap)));
+    const rowStep = rowHeight + trackGap;
+    const minSpan = Math.ceil(height / rowStep);
+    const span = Math.max(1, minSpan, Math.round((height + cardGap) / rowStep));
     const slot = { column: column + 1, row: bottoms[column], span };
     bottoms[column] += span;
     return slot;

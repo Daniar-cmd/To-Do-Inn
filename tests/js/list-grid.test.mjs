@@ -71,16 +71,18 @@ test('moving across a filtered view leaves pinned lists untouched', () => {
   assert.deepEqual(fullBoard.map((item) => item.id), [1, 3, 4, 2]);
 });
 
-test('masonry keeps logical columns 1 2 3 / 4 5 6 and stacks cards without equal-height rows', () => {
+test('masonry keeps logical columns and a consistent gap between uneven card heights', () => {
   const heights = [450, 120, 130, 140, 120, 200];
-  const slots = masonrySlots(heights, 3, 8, 18);
+  const slots = masonrySlots(heights, 3, 1, 1, 24);
   assert.deepEqual(slots.slice(0, 3).map(({ column, row }) => [column, row]), [[1, 1], [2, 1], [3, 1]]);
   assert.deepEqual(slots.slice(3).map(({ column }) => column), [1, 2, 3]);
   for (let index = 3; index < slots.length; index++) {
     assert.equal(slots[index].row, slots[index - 3].row + slots[index - 3].span);
+    const actualGap = (slots[index].row - slots[index - 3].row) * 2 - heights[index - 3];
+    assert(Math.abs(actualGap - 24) <= 1);
   }
   assert(slots[4].row < slots[3].row);
-  assert.deepEqual(masonrySlots([80, 100], 1, 8, 18).map(({ column }) => column), [1, 1]);
+  assert.deepEqual(masonrySlots([80, 100], 1, 1, 1, 24).map(({ column }) => column), [1, 1]);
 });
 
 test('first-to-fifth insertion keeps the fifth column even when tall cards change the column heights', () => {
@@ -89,7 +91,7 @@ test('first-to-fifth insertion keeps the fifth column even when tall cards chang
     const reordered = moveListToSlot(original, 1, 5);
     assert.deepEqual(reordered.map((list) => list.id), [2, 3, 4, 5, 1, 6]);
     for (const columns of [1, 2, 3, 4]) {
-      const positions = masonrySlots(reordered.map((list) => list.height), columns, 8, 18);
+      const positions = masonrySlots(reordered.map((list) => list.height), columns, 1, 1, 24);
       assert.equal(positions[4].column, 4 % columns + 1);
       assert.equal(positions[4].row, positions[4 - columns].row + positions[4 - columns].span);
     }
@@ -119,13 +121,17 @@ test('responsive masonry supports 1–4 columns, long boards and reflow in both 
   const moved = moveListToSlot(items, 1, 205);
   assert.equal(moved[204].id, 1);
   for (const columns of [4, 3, 2, 1, 2, 4]) {
-    for (const gap of [12, 18]) {
-      const positions = masonrySlots(moved.map((item) => item.height), columns, 8, gap);
+    for (const gap of [18, 24]) {
+      const positions = masonrySlots(moved.map((item) => item.height), columns, 1, 1, gap);
       assert.equal(positions.length, items.length);
       for (const [index, position] of positions.entries()) {
         assert.equal(position.column, index % columns + 1);
         assert.equal(position.row, index < columns ? 1 : positions[index - columns].row + positions[index - columns].span);
-        assert(position.span * 8 + (position.span - 1) * gap >= moved[index].height);
+        const columnIndex = index - columns;
+        if (columnIndex >= 0) {
+          const actualGap = (position.row - positions[columnIndex].row) * 2 - moved[columnIndex].height;
+          assert(actualGap >= gap - 1 && actualGap <= gap + 1);
+        }
       }
       assert(positions.at(-1).row > 1000);
     }

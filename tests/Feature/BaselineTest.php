@@ -18,6 +18,10 @@ class BaselineTest extends DatabaseTestCase
 
         // These tests exercise adoption of the frozen legacy schema, so temporarily restore
         // that schema inside the test transaction after all forward migrations are applied.
+        $skyThemeMigration = require database_path('migrations/2026_10_28_000016_add_sky_task_list_theme.php');
+        $skyThemeMigration->down();
+        $dueDateMigration = require database_path('migrations/2026_10_28_000015_add_task_list_due_date.php');
+        $dueDateMigration->down();
         $customListOrderMigration = require database_path('migrations/2026_10_28_000014_add_custom_task_list_order_to_boards.php');
         $customListOrderMigration->down();
         $taskListPinOrderMigration = require database_path('migrations/2026_10_28_000013_add_task_list_pin_and_order.php');
