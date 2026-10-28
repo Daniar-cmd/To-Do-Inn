@@ -40,6 +40,8 @@ class WorkspaceController
                     'update_board' => $this->saveBoard($input, $userId, true),
                     'create_list' => $this->saveList($input, $userId, false),
                     'update_list' => $this->saveList($input, $userId, true),
+                    'set_list_pinned' => $this->setListPinned($input, $userId),
+                    'reorder_list' => $this->reorderList($input, $userId),
                     'create_flag' => $this->createFlag($input, $userId),
                     'invite_member' => $this->inviteMember($input, $userId),
                     'create_task', 'update_task', 'toggle_task', 'reorder_task', 'delete_task' => $this->saveTask($input, $userId),
@@ -64,7 +66,7 @@ class WorkspaceController
             }
         })->orderByRaw('CASE WHEN corporate_account_id IS NOT NULL THEN 0 ELSE 1 END')
             ->orderByDesc('is_default')->orderBy('id')
-            ->get(['id', 'user_id', 'corporate_account_id', 'name', 'description', 'board_type']);
+            ->get(['id', 'user_id', 'corporate_account_id', 'name', 'description', 'board_type', 'lists_order_customized']);
         if ($boards->isEmpty()) {
             $this->fail(404, 'Рабочая доска не найдена.');
         }
@@ -79,7 +81,8 @@ class WorkspaceController
                 ->on('flags.board_id', '=', 'lists.board_id');
         })->whereIn('lists.board_id', $boardIds)->select([
             'lists.id', 'lists.board_id', 'lists.name', 'lists.description', 'lists.created_at',
-            'lists.is_important', 'lists.theme', 'lists.flag_id', 'flags.name as flag_name', 'flags.color as flag_color',
+            'lists.is_important', 'lists.theme', 'lists.is_pinned', 'lists.sort_order',
+            'lists.flag_id', 'flags.name as flag_name', 'flags.color as flag_color',
         ]);
         if ($search !== '') {
             $found = $lists->join('boards', 'boards.id', '=', 'lists.board_id')
@@ -93,7 +96,10 @@ class WorkspaceController
                                 ->whereColumn('tasks.user_id', 'lists.user_id')
                                 ->whereRaw('POSITION(LOWER(?) IN LOWER(tasks.title)) > 0', [$search]);
                         });
-                })->orderBy('boards.name')->orderByDesc('lists.created_at')->orderByDesc('lists.id')->get();
+                })->orderBy('boards.name')->orderByDesc('lists.is_pinned')
+                ->orderByRaw('CASE WHEN boards.lists_order_customized THEN lists.sort_order END ASC')
+                ->orderByRaw('CASE WHEN NOT boards.lists_order_customized THEN lists.created_at END DESC')
+                ->orderByDesc('lists.id')->get();
             $tasks = DB::table('tasks')->whereIn('list_id', $found->pluck('id'))
                 ->orderBy('sort_order')->orderBy('id')->get(['id', 'list_id', 'title', 'is_completed'])->groupBy('list_id');
             $flags = DB::table('user_flags')->whereIn('board_id', $boardIds)->orderBy('name')
@@ -134,8 +140,13 @@ class WorkspaceController
                 ->get(['accounts.id', 'accounts.organization_name as name', 'members.role'])
                 ->map(fn ($account) => ['id' => (int) $account->id, 'name' => $account->name, 'role' => $account->role])->all(),
             'flags' => $flags->map(fn ($flag) => $this->flagData($flag, true))->all(),
-            'lists' => $lists->where('lists.board_id', $board->id)->orderBy('lists.created_at')->orderBy('lists.id')
-                ->get()->map(fn ($list) => $this->listData($list))->all(),
+            'lists' => tap($lists->where('lists.board_id', $board->id)->orderByDesc('lists.is_pinned'), function ($query) use ($board): void {
+                if ($board->lists_order_customized) {
+                    $query->orderBy('lists.sort_order')->orderBy('lists.id');
+                } else {
+                    $query->orderByDesc('lists.created_at')->orderByDesc('lists.id');
+                }
+            })->get()->map(fn ($list) => $this->listData($list))->all(),
             'tasks' => $tasks->map(fn ($task) => $this->taskData($task))->all(),
         ]);
     }
@@ -249,7 +260,7 @@ class WorkspaceController
             }
             $boardOwnerId = (int) $board->user_id;
         } else {
-            $board = $this->accessibleBoard((int) $boardId, $userId);
+            $board = $this->accessibleBoard((int) $boardId, $userId, true);
             if ($board === null) {
                 $this->fail(404, 'Рабочая доска не найдена.');
             }
@@ -275,7 +286,14 @@ class WorkspaceController
                 $this->deleteUnusedFlag((int) $previous->flag_id, $boardId, $boardOwnerId);
             }
         } else {
-            $id = DB::table('task_lists')->insertGetId($fields + ['user_id' => $boardOwnerId, 'board_id' => $boardId]);
+            // On a manually arranged board, new unpinned lists still appear first.
+            // Keep existing positions intact, including those of pinned lists.
+            $firstOrder = DB::table('task_lists')->where('board_id', $boardId)->min('sort_order');
+            $id = DB::table('task_lists')->insertGetId($fields + [
+                'user_id' => $boardOwnerId,
+                'board_id' => $boardId,
+                'sort_order' => $firstOrder === null ? 0 : (int) $firstOrder - 1,
+            ]);
         }
         $flag = $flagId === null ? null : DB::table('user_flags')->where('id', $flagId)
             ->where('user_id', $boardOwnerId)->where('board_id', $boardId)->first(['id', 'board_id', 'name', 'color']);
@@ -285,6 +303,78 @@ class WorkspaceController
 
         return $this->success(['list' => ['id' => $id, 'name' => $fields['name'], 'is_important' => $important,
             'theme' => $theme, 'flag' => $flag === null ? null : $this->flagData($flag, false)]], 201);
+    }
+
+    private function setListPinned(array $input, int $userId): JsonResponse
+    {
+        $id = $this->id($input['list_id'] ?? null);
+        $isPinned = $input['is_pinned'] ?? null;
+        if ($id === false || !is_bool($isPinned)) {
+            $this->fail(422, 'Проверьте закрепление списка.');
+        }
+        $list = DB::table('task_lists')->where('id', $id)->first();
+        $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId, true);
+        if ($list === null || $board === null || (int) $list->user_id !== (int) $board->user_id) {
+            $this->fail(404, 'Список не найден.');
+        }
+        DB::table('task_lists')->where('id', $id)->where('user_id', $board->user_id)->update(['is_pinned' => $isPinned]);
+
+        return $this->success(['updated' => true]);
+    }
+
+    private function reorderList(array $input, int $userId): JsonResponse
+    {
+        $id = $this->id($input['list_id'] ?? null);
+        $targetId = $this->id($input['target_list_id'] ?? null);
+        $insertBefore = $input['insert_before'] ?? null;
+        if ($id === false || $targetId === false || !is_bool($insertBefore)) {
+            $this->fail(422, 'Проверьте порядок списков.');
+        }
+
+        $list = DB::table('task_lists')->where('id', $id)->first();
+        $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId, true);
+        // Re-read after the board lock so another member's pin/reorder cannot race this write.
+        $list = $board === null ? null : DB::table('task_lists')->where('id', $id)->first();
+        $target = DB::table('task_lists')->where('id', $targetId)->first();
+        if ($list === null || $target === null || $board === null
+            || (int) $target->board_id !== (int) $list->board_id
+            || (int) $list->user_id !== (int) $board->user_id
+            || (int) $target->user_id !== (int) $board->user_id) {
+            $this->fail(404, 'Список не найден в этой доске.');
+        }
+        if ((bool) $list->is_pinned || (bool) $target->is_pinned) {
+            $this->fail(409, 'Закреплённый список нельзя переместить.');
+        }
+        if ($id === $targetId) {
+            return $this->success(['updated' => true]);
+        }
+
+        if (!(bool) $board->lists_order_customized) {
+            $defaultOrder = DB::table('task_lists')->where('board_id', $list->board_id)->where('user_id', $board->user_id)
+                ->orderByDesc('is_pinned')->orderByDesc('created_at')->orderByDesc('id')->lockForUpdate()->pluck('id');
+            foreach ($defaultOrder as $position => $orderedId) {
+                DB::table('task_lists')->where('id', $orderedId)->where('user_id', $board->user_id)->update(['sort_order' => $position]);
+            }
+        }
+
+        $ids = DB::table('task_lists')->where('board_id', $list->board_id)->where('user_id', $board->user_id)
+            ->where('is_pinned', false)->orderBy('sort_order')->orderBy('id')->lockForUpdate()
+            ->pluck('id')->map(fn ($value) => (int) $value)->all();
+        $sourcePosition = array_search($id, $ids, true);
+        $targetPosition = array_search($targetId, $ids, true);
+        if ($sourcePosition === false || $targetPosition === false) {
+            $this->fail(404, 'Список не найден в этой доске.');
+        }
+
+        array_splice($ids, $sourcePosition, 1);
+        $targetPosition = array_search($targetId, $ids, true);
+        array_splice($ids, $targetPosition + ($insertBefore ? 0 : 1), 0, [$id]);
+        foreach ($ids as $position => $listId) {
+            DB::table('task_lists')->where('id', $listId)->where('user_id', $board->user_id)->update(['sort_order' => $position]);
+        }
+        DB::table('boards')->where('id', $list->board_id)->update(['lists_order_customized' => true]);
+
+        return $this->success(['updated' => true]);
     }
 
     private function createFlag(array $input, int $userId): JsonResponse
@@ -559,6 +649,7 @@ class WorkspaceController
     {
         return ['id' => (int) $list->id, 'board_id' => (int) $list->board_id, 'name' => $list->name,
             'description' => $list->description, 'created_at' => $list->created_at, 'is_important' => (bool) $list->is_important,
+            'is_pinned' => (bool) $list->is_pinned, 'sort_order' => (int) $list->sort_order,
             'theme' => $list->theme, 'flag' => $list->flag_id === null ? null
                 : ['id' => (int) $list->flag_id, 'name' => $list->flag_name, 'color' => $list->flag_color]];
     }

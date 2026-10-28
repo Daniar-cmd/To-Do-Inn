@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
 import { NotificationsMenu } from '../NotificationsMenu.jsx';
+import { ListGrid } from './ListGrid.jsx';
+import { moveListToSlot } from './listGrid.js';
 import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
 
 const accountTypeLabels = {
@@ -118,7 +120,7 @@ function ListTask({ task, csrfToken, onToggle, onChange, onReorder, onDelete, an
   </li>;
 }
 
-function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
+function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated, onTogglePin, dragHandle }) {
   const [taskName, setTaskName] = useState('');
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -126,6 +128,7 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
   const [taskDeleteTarget, setTaskDeleteTarget] = useState(null);
   const [deletingTask, setDeletingTask] = useState(false);
   const [taskDeleteError, setTaskDeleteError] = useState('');
+  const [pinning, setPinning] = useState(false);
   const [animatingTasks, setAnimatingTasks] = useState(() => new Set());
   const [draggingTaskId, setDraggingTaskId] = useState(null);
   const [name, setName] = useState(list.name);
@@ -138,7 +141,6 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
   const [showDone, setShowDone] = useState(false);
   const [error, setError] = useState('');
   const descriptionRef = useRef(null);
-  const cardRef = useRef(null);
   const pending = tasks.filter((task) => !task.is_completed);
   const completed = tasks.filter((task) => task.is_completed);
 
@@ -147,25 +149,6 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
     descriptionRef.current.style.height = 'auto';
     descriptionRef.current.style.height = `${descriptionRef.current.scrollHeight}px`;
   }, [editing, description]);
-
-  useEffect(() => {
-    const card = cardRef.current;
-    const grid = card?.parentElement;
-    if (!card || !grid || typeof ResizeObserver === 'undefined') return undefined;
-
-    function fitMasonryRow() {
-      const styles = window.getComputedStyle(grid);
-      const rowHeight = Number.parseFloat(styles.gridAutoRows) || 8;
-      const rowGap = Number.parseFloat(styles.rowGap) || 18;
-      const span = Math.ceil((card.getBoundingClientRect().height + rowGap) / (rowHeight + rowGap));
-      card.style.gridRowEnd = `span ${span}`;
-    }
-
-    const observer = new ResizeObserver(fitMasonryRow);
-    observer.observe(card);
-    fitMasonryRow();
-    return () => observer.disconnect();
-  }, []);
 
   async function addTask(event) {
     event.preventDefault();
@@ -266,20 +249,33 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
     }
   }
 
+  async function handleTogglePin() {
+    setPinning(true);
+    setError('');
+    try {
+      await onTogglePin(list, !list.is_pinned);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPinning(false);
+    }
+  }
+
   return <>
-  <article ref={cardRef} className={`task-list-card${editing ? ' is-editing' : ''}`} data-theme={editing ? cardTheme : list.theme}>
+  <article className={`task-list-card${editing ? ' is-editing' : ''}${list.is_pinned ? ' is-pinned' : ''}`} data-theme={editing ? cardTheme : list.theme}>
     <header className="task-list-card__header">
+      {dragHandle && !editing && <button className={`task-list-card__drag-handle${list.is_pinned ? ' is-disabled' : ''}`} type="button" aria-label={list.is_pinned ? 'Список закреплён' : `Переместить список «${list.name}»`} title={list.is_pinned ? 'Сначала открепите список' : 'Перетащить список'} disabled={dragHandle.disabled} aria-disabled={list.is_pinned} onPointerDown={dragHandle.onPointerDown} onDragStart={(event) => event.preventDefault()}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>}
       <div className="task-list-card__created">
         {list.is_important && <svg className="task-list-card__important" aria-label="Важный список" role="img" viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.4l6.2-.9L12 2.8Z" /></svg>}
         {list.flag && <span className={`task-list-card__flag-mark is-${list.flag.color}`} data-tooltip={list.flag.name} title={list.flag.name} aria-label={`Флаг: ${list.flag.name}`} role="img" tabIndex="0"><FlagIcon color={list.flag.color} /></span>}
         <time dateTime={list.created_at}>{formatListCreatedAt(list.created_at)}</time>
       </div>
       <div className="task-list-card__actions">
+      <button className={`task-list-card__pin-button${list.is_pinned ? ' is-pinned' : ''}`} type="button" aria-label={list.is_pinned ? 'Открепить список' : 'Закрепить список'} aria-pressed={list.is_pinned} title={list.is_pinned ? 'Открепить список' : 'Закрепить список'} disabled={pinning || dragHandle?.locked} onClick={handleTogglePin}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l-1 5 3 3v2H6v-2l3-3-1-5Z"/><path d="M12 13v8"/></svg>
+      </button>
       <button className="task-list-card__edit-button" type="button" aria-label="Изменить список" title="Изменить список" onClick={() => setEditing((value) => !value)}>
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
-      </button>
-      <button className="task-list-card__delete-button" type="button" aria-label="Удалить список" title="Удалить список" onClick={() => setConfirmingDelete(true)}>
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/></svg>
       </button>
       </div>
     </header>
@@ -294,6 +290,7 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
       </div>
       <div className="task-list-card__field"><span>Флаг</span><details className="flag-picker task-list-card__flag-picker"><summary className="list-option-button" aria-label="Изменить флаг списка">{flagId && <FlagIcon color={flags.find((item) => String(item.id) === String(flagId))?.color || 'blue'} />}<span>{newFlagName ? 'Новый флаг' : flags.find((item) => String(item.id) === String(flagId))?.name || 'Без флага'}</span><svg className="task-list-card__flag-chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg></summary><div className="flag-picker__panel"><p className="flag-picker__title">Выберите флаг</p><button className={`flag-picker__choice${!flagId && !newFlagName ? ' is-selected' : ''}`} type="button" onClick={(event) => { setFlagId(''); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><span className="flag-picker__empty-icon" aria-hidden="true" />Без флага</button>{flags.map((flag) => <button className={`flag-picker__choice${String(flagId) === String(flag.id) && !newFlagName ? ' is-selected' : ''}`} type="button" key={flag.id} onClick={(event) => { setFlagId(flag.id); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><FlagIcon color={flag.color} /><span>{flag.name}</span></button>)}<label className="flag-picker__custom-label" htmlFor={`edit-flag-name-${list.id}`}>Или создайте новый</label><div className="flag-picker__create-row"><input className="flag-picker__custom-input" id={`edit-flag-name-${list.id}`} type="text" maxLength="40" placeholder="Название флага" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setFlagId(''); }} />{newFlagName.trim() && <button className="flag-picker__create-button" type="button" aria-label="Создать флаг" title="Создать флаг" disabled={creatingFlag} onClick={createFlag}><PlusIcon /></button>}</div></div></details></div>
       {error && <p className="task-list-card__error" role="alert">{error}</p>}
+      <button type="button" className="task-list-card__delete-list" onClick={() => setConfirmingDelete(true)}>Удалить список</button>
       <div className="task-list-card__edit-actions"><button type="button" className="task-list-card__cancel" onClick={() => { setEditing(false); setName(list.name); setDescription(list.description || ''); setCardTheme(list.theme); setFlagId(list.flag?.id || ''); setNewFlagName(''); setImportant(list.is_important); }}>Отмена</button><button type="submit">Сохранить</button></div>
     </form> : <>
       <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{description && <p className="task-list-card__description">{description}</p>}</div>
@@ -577,6 +574,36 @@ export function Workspace() {
     }
   }
 
+  async function toggleListPinned(list, isPinned) {
+    await updateWorkspace({ action: 'set_list_pinned', list_id: list.id, is_pinned: isPinned }, csrfToken);
+    if (searchQuery.trim()) {
+      await refreshSearchResults();
+    } else {
+      await refreshBoardData(list.board_id);
+    }
+  }
+
+  async function reorderListCards(sourceId, targetId) {
+    const boardId = board.id;
+    const requestId = ++workspaceRequestId.current;
+    const before = lists;
+    const insertBefore = lists.findIndex((item) => item.id === sourceId) > lists.findIndex((item) => item.id === targetId);
+    setLists((current) => moveListToSlot(current, sourceId, targetId));
+    try {
+      await updateWorkspace({ action: 'reorder_list', list_id: sourceId, target_list_id: targetId, insert_before: insertBefore }, csrfToken);
+      await refreshBoardData(boardId);
+    } catch (error) {
+      if (String(activeBoardId.current) === String(boardId)) {
+        if (requestId === workspaceRequestId.current) {
+          setLists(before);
+        } else {
+          await refreshBoardData(boardId);
+        }
+      }
+      throw error;
+    }
+  }
+
   async function handleCreateBoard(event) {
     event.preventDefault();
     if (!boardName.trim()) {
@@ -786,7 +813,6 @@ export function Workspace() {
         new_flag_name: newFlagName.trim(),
       }, csrfToken);
 
-      setLists((current) => [...current, list]);
       if (list.flag) {
         setFlags((current) => current.some((flag) => flag.id === list.flag.id)
           ? current
@@ -801,7 +827,7 @@ export function Workspace() {
       setNewFlagName('');
       setFlagPickerOpen(false);
       setFeedback('');
-      void refreshBoardData(board.id);
+      await refreshBoardData(board.id);
     } catch (error) {
       setFeedback(error.message);
     } finally {
@@ -1063,11 +1089,11 @@ export function Workspace() {
               {!searchLoading && !searchError && searchResults?.length === 0 && <p className="workspace-search-results__message">Совпадений не найдено</p>}
               {searchResults?.map((result) => <div className="workspace-search-result" data-theme={result.theme} key={`${result.board_id}:${result.id}`}>
                 <p className="workspace-search-result__board">{result.board_name}</p>
-                <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onFlagCreated={addCreatedFlag} />
+                <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
               </div>)}
-            </div> : <div className="workspace-lists__items">
-              {[...visibleLists].reverse().map((list) => <ListCard key={list.id} list={list} flags={flags} tasks={tasks.filter((task) => task.list_id === list.id)} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onFlagCreated={addCreatedFlag} />)}
-            </div>}
+            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} onSwap={reorderListCards}>
+              {(list, dragHandle) => <ListCard list={list} flags={flags} tasks={tasks.filter((task) => task.list_id === list.id)} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} />}
+            </ListGrid>}
           </section>
           </>}
         </main>

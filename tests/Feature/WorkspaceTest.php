@@ -248,6 +248,80 @@ class WorkspaceTest extends DatabaseTestCase
         $this->assertDatabaseHas('tasks', ['id' => $pending]);
     }
 
+    public function test_pinned_lists_stay_first_and_unpinned_lists_can_be_reordered(): void
+    {
+        $first = $this->list($this->user->id, $this->board, 'First');
+        $second = $this->list($this->user->id, $this->board, 'Second');
+        $third = $this->list($this->user->id, $this->board, 'Third');
+
+        $created = $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board, 'name' => 'New list'])
+            ->assertCreated()->json('data.list.id');
+        $this->assertSame([$created, $third, $second, $first], $this->request()->json('data.lists.*.id'));
+
+        $this->postWorkspace(['action' => 'set_list_pinned', 'list_id' => $second, 'is_pinned' => true])->assertOk();
+        $this->assertSame([$second, $created, $third, $first], $this->request()->json('data.lists.*.id'));
+
+        $this->postWorkspace(['action' => 'reorder_list', 'list_id' => $first, 'target_list_id' => $third, 'insert_before' => true])->assertOk();
+        $this->assertSame([$second, $created, $first, $third], $this->request()->json('data.lists.*.id'));
+        $this->assertTrue((bool) DB::table('boards')->where('id', $this->board)->value('lists_order_customized'));
+        $afterReorder = $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board, 'name' => 'Newest'])
+            ->assertCreated()->json('data.list.id');
+        $this->assertSame([$second, $afterReorder, $created, $first, $third], $this->request()->json('data.lists.*.id'));
+        $this->assertSame([$second, $afterReorder, $created, $first, $third], $this->request()->json('data.lists.*.id'));
+        $newest = $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board, 'name' => 'Another new list'])
+            ->assertCreated()->json('data.list.id');
+        $this->assertSame([$second, $newest, $afterReorder, $created, $first, $third], $this->request()->json('data.lists.*.id'));
+        $this->postWorkspace(['action' => 'reorder_list', 'list_id' => $first, 'target_list_id' => $second, 'insert_before' => true])->assertStatus(409);
+        $this->postWorkspace(['action' => 'reorder_list', 'list_id' => $second, 'target_list_id' => $first, 'insert_before' => true])->assertStatus(409);
+        $this->assertTrue((bool) DB::table('task_lists')->where('id', $second)->value('is_pinned'));
+    }
+
+    public function test_grid_move_shifts_intervening_lists_and_survives_reload(): void
+    {
+        $ids = [];
+        foreach (['A', 'B', 'C', 'D', 'E', 'F', 'Pinned'] as $name) {
+            $ids[] = $this->list($this->user->id, $this->board, $name);
+        }
+        $this->postWorkspace(['action' => 'set_list_pinned', 'list_id' => $ids[6], 'is_pinned' => true])->assertOk();
+        $task = $this->task($this->user->id, $ids[1], 'Must stay in its list');
+        $original = [$ids[6], $ids[5], $ids[4], $ids[3], $ids[2], $ids[1], $ids[0]];
+        $this->assertSame($original, $this->request()->json('data.lists.*.id'));
+
+        $input = ['action' => 'reorder_list', 'list_id' => $ids[5], 'target_list_id' => $ids[1], 'insert_before' => false];
+        $this->postWorkspace($input)->assertOk()->assertJsonPath('data.updated', true);
+        $expected = [$ids[6], $ids[4], $ids[3], $ids[2], $ids[1], $ids[5], $ids[0]];
+        $this->assertSame($expected, $this->request()->json('data.lists.*.id'));
+        $this->assertSame($expected, $this->request()->json('data.lists.*.id'));
+        $this->assertDatabaseHas('tasks', ['id' => $task, 'list_id' => $ids[1]]);
+
+        $this->postWorkspace(['action' => 'reorder_list', 'list_id' => $ids[5], 'target_list_id' => $ids[4], 'insert_before' => true])->assertOk();
+        $this->assertSame($original, $this->request()->json('data.lists.*.id'));
+
+        $before = $this->state();
+        $this->postWorkspace([...$input, 'target_list_id' => $ids[6]])->assertStatus(409);
+        $this->postWorkspace([...$input, 'list_id' => $ids[6]])->assertStatus(409);
+        $this->assertSame($before, $this->state());
+    }
+
+    public function test_grid_move_rejects_other_boards_foreign_lists_and_invalid_payloads(): void
+    {
+        $own = $this->list($this->user->id, $this->board, 'Own');
+        $anotherBoard = $this->board($this->user->id, 'Another');
+        $otherList = $this->list($this->user->id, $anotherBoard, 'Other board');
+        $foreign = $this->list($this->other->id, $this->foreignBoard, 'Private');
+        $input = ['action' => 'reorder_list', 'list_id' => $own, 'target_list_id' => $own, 'insert_before' => true];
+        $before = $this->state();
+        foreach ([$otherList, $foreign, PHP_INT_MAX] as $target) {
+            $this->postWorkspace([...$input, 'target_list_id' => $target])->assertNotFound();
+            $this->postWorkspace([...$input, 'list_id' => $target])->assertNotFound();
+        }
+        $this->postWorkspace([...$input, 'list_id' => $foreign, 'target_list_id' => $foreign])->assertNotFound();
+        $this->postWorkspace([...$input, 'insert_before' => 'true'])->assertUnprocessable();
+        $this->postWorkspace($input)->assertOk();
+        $this->assertFalse((bool) DB::table('boards')->where('id', $this->board)->value('lists_order_customized'));
+        $this->assertSame($before, $this->state());
+    }
+
     public function test_foreign_and_missing_resources_cannot_be_changed(): void
     {
         $foreignList = $this->list($this->other->id, $this->foreignBoard);
@@ -369,13 +443,13 @@ class WorkspaceTest extends DatabaseTestCase
         $this->request(query: '?search[]=needle')->assertJsonPath('data.board.id', $this->board);
     }
 
-    public function test_search_and_board_list_ordering_preserve_legacy_rules(): void
+    public function test_default_list_order_is_newest_first_until_manual_reordering(): void
     {
         $a = $this->list($this->user->id, $this->board, 'Match A');
         $b = $this->list($this->user->id, $this->board, 'Match B');
         DB::table('task_lists')->where('id', $a)->update(['created_at' => '2020-01-01 00:00:00+00']);
         DB::table('task_lists')->where('id', $b)->update(['created_at' => '2020-01-01 00:00:00+00']);
-        $this->assertSame([$a, $b], $this->request()->json('data.lists.*.id'));
+        $this->assertSame([$b, $a], $this->request()->json('data.lists.*.id'));
         $this->assertSame([$b, $a], $this->request(query: '?search=Match')->json('data.results.*.id'));
         $earlier = $this->board($this->user->id, 'Alphabetical first');
         $c = $this->list($this->user->id, $earlier, 'Match C');

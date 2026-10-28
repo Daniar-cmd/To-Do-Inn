@@ -1,0 +1,40 @@
+// Insert into the target slot: intervening cards shift one position.
+export function moveListToSlot(lists, sourceId, targetId) {
+  const source = lists.findIndex((list) => list.id === sourceId);
+  const target = lists.findIndex((list) => list.id === targetId);
+  if (source < 0 || target < 0 || source === target || lists[source].is_pinned
+      || lists[target].is_pinned || lists[source].board_id !== lists[target].board_id) return lists;
+  const result = [...lists];
+  result.splice(target, 0, result.splice(source, 1)[0]);
+  return result;
+}
+
+// Use stable cell rectangles, not the moving/animated cards, including the gaps.
+export function findGridTarget(cells, bounds, x, y) {
+  if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return null;
+  let nearest = null;
+  let distance = Infinity;
+  for (const cell of cells) {
+    const dx = Math.max(cell.left - x, 0, x - cell.right);
+    const dy = Math.max(cell.top - y, 0, y - cell.bottom);
+    const nextDistance = dx * dx + dy * dy;
+    if (nextDistance < distance) {
+      nearest = cell;
+      distance = nextDistance;
+    }
+  }
+  return nearest && !nearest.is_pinned ? nearest.id : null;
+}
+
+// Use the actual responsive column count. Heights affect vertical packing,
+// while insertion order determines the column; the number of rows is unlimited.
+export function masonrySlots(heights, columns, rowHeight, gap) {
+  const bottoms = Array(columns).fill(1);
+  return heights.map((height, index) => {
+    const column = index % columns;
+    const span = Math.max(1, Math.ceil((height + gap) / (rowHeight + gap)));
+    const slot = { column: column + 1, row: bottoms[column], span };
+    bottoms[column] += span;
+    return slot;
+  });
+}
