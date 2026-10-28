@@ -68,7 +68,17 @@ function FlagIcon({ color = 'blue' }) {
   return <span className={`sidebar-flag__icon is-${color}`} aria-hidden="true">⚑</span>;
 }
 
-function ListTask({ task, csrfToken, onToggle, onChange, onReorder, animating, draggingTaskId, onDragStart, onDragEnd }) {
+function completedTasksLabel(count) {
+  const remainder100 = count % 100;
+  const remainder10 = count % 10;
+  const noun = remainder100 >= 11 && remainder100 <= 14
+    ? 'задач'
+    : remainder10 === 1 ? 'задача' : remainder10 >= 2 && remainder10 <= 4 ? 'задачи' : 'задач';
+
+  return `Выполнено ${count} ${noun}`;
+}
+
+function ListTask({ task, csrfToken, onToggle, onChange, onReorder, onDelete, animating, draggingTaskId, onDragStart, onDragEnd }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
   const [error, setError] = useState('');
@@ -95,13 +105,14 @@ function ListTask({ task, csrfToken, onToggle, onChange, onReorder, animating, d
   }
 
   return <li className={`${dropTarget ? 'is-drop-target ' : ''}${draggingTaskId === task.id ? 'is-dragging' : ''}`} onDragOver={(event) => { if (task.is_completed) return; event.preventDefault(); setDropTarget(true); }} onDragLeave={() => setDropTarget(false)} onDrop={(event) => { event.preventDefault(); setDropTarget(false); if (task.is_completed) return; const draggedId = Number(event.dataTransfer.getData('text/plain')); if (draggedId && draggedId !== task.id) onReorder(draggedId, task.id); onDragEnd(); }}>
-    <div className={`task-list-card__task${completed ? ' is-completed' : ''}`}>
+    <div className={`task-list-card__task${completed ? ' is-completed' : ''}${animating ? ' is-completing' : ''}`}>
       <span className="task-list-card__task-control">
         <input type="checkbox" aria-label={`Отметить задачу «${task.title}» выполненной`} checked={task.is_completed || animating} onChange={() => onToggle(task)} />
         <span className="task-list-card__task-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><path d="m5 10 3.2 3.2L15 6.5" /></svg></span>
       </span>
       {editing ? <input className="task-list-card__task-edit" aria-label="Название задачи" autoFocus maxLength="240" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { setTitle(task.title); setEditing(false); } }} /> : <span className="task-list-card__task-title" onDoubleClick={() => { if (!completed) { setTitle(task.title); setEditing(true); } }}>{task.title}</span>}
       {!editing && !completed && <button className="task-list-card__task-menu" type="button" draggable="true" aria-label="Перетащить задачу или изменить её название" title="Нажми для переименования, перетащи для сортировки" onClick={() => { if (!draggedRef.current) { setTitle(task.title); setEditing(true); } }} onDragStart={(event) => { draggedRef.current = true; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(task.id)); onDragStart(task.id); }} onDragEnd={() => { onDragEnd(); window.setTimeout(() => { draggedRef.current = false; }, 0); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>}
+      {!editing && task.is_completed && <button className="task-list-card__task-delete" type="button" aria-label={`Удалить выполненную задачу «${task.title}»`} title="Удалить выполненную задачу" onClick={onDelete}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></svg></button>}
     </div>
     {error && <p className="task-list-card__error" role="alert">{error}</p>}
   </li>;
@@ -112,6 +123,9 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [taskDeleteTarget, setTaskDeleteTarget] = useState(null);
+  const [deletingTask, setDeletingTask] = useState(false);
+  const [taskDeleteError, setTaskDeleteError] = useState('');
   const [animatingTasks, setAnimatingTasks] = useState(() => new Set());
   const [draggingTaskId, setDraggingTaskId] = useState(null);
   const [name, setName] = useState(list.name);
@@ -237,6 +251,21 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
     }
   }
 
+  async function handleDeleteTask() {
+    if (!taskDeleteTarget || deletingTask) return;
+    setDeletingTask(true);
+    setTaskDeleteError('');
+    try {
+      await updateWorkspace({ action: 'delete_task', task_id: taskDeleteTarget.id }, csrfToken);
+      setTaskDeleteTarget(null);
+      await onChange();
+    } catch (err) {
+      setTaskDeleteError(err.message);
+    } finally {
+      setDeletingTask(false);
+    }
+  }
+
   return <>
   <article ref={cardRef} className={`task-list-card${editing ? ' is-editing' : ''}`} data-theme={editing ? cardTheme : list.theme}>
     <header className="task-list-card__header">
@@ -269,9 +298,9 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
     </form> : <>
       <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{description && <p className="task-list-card__description">{description}</p>}</div>
       <div className="task-list-card__section-label">ЗАДАЧИ</div>
-      <ul className="task-list-card__tasks">{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>
+      <ul className="task-list-card__tasks">{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>
       <form className="task-list-card__add" onSubmit={addTask}><input aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} onChange={(event) => setTaskName(event.target.value)} /><button type="submit" aria-label="Добавить задачу">Добавить</button></form>
-      {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{showDone ? 'Скрыть выполненные' : 'Выполненные'}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>}</footer>}
+      {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>}</footer>}
       {error && <p role="alert" className="task-list-card__error">{error}</p>}
     </>}
   </article>
@@ -281,6 +310,14 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onFlagCreated }) {
       <p>Вы точно хотите удалить этот список?</p>
       <div className="list-delete-dialog__actions"><button type="button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Отмена</button><button type="button" onClick={handleDeleteList} disabled={deleting}>{deleting ? 'Удаляем…' : 'Удалить'}</button></div>
       {error && <p className="list-delete-dialog__error" role="alert">{error}</p>}
+    </section>
+  </div>}
+  {taskDeleteTarget && <div className="list-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingTask) setTaskDeleteTarget(null); }}>
+    <section className="list-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`delete-task-title-${taskDeleteTarget.id}`}>
+      <h2 id={`delete-task-title-${taskDeleteTarget.id}`}>Удалить выполненную задачу?</h2>
+      <p>«{taskDeleteTarget.title}» будет удалена без возможности восстановления. Удалённые задачи не учитываются в продуктивности и общем количестве выполненных задач.</p>
+      {taskDeleteError && <p className="list-delete-dialog__error" role="alert">{taskDeleteError}</p>}
+      <div className="list-delete-dialog__actions"><button type="button" onClick={() => setTaskDeleteTarget(null)} disabled={deletingTask}>Отмена</button><button type="button" onClick={handleDeleteTask} disabled={deletingTask}>{deletingTask ? 'Удаляем…' : 'Удалить задачу'}</button></div>
     </section>
   </div>}
   </>;

@@ -42,7 +42,7 @@ class WorkspaceController
                     'update_list' => $this->saveList($input, $userId, true),
                     'create_flag' => $this->createFlag($input, $userId),
                     'invite_member' => $this->inviteMember($input, $userId),
-                    'create_task', 'update_task', 'toggle_task', 'reorder_task' => $this->saveTask($input, $userId),
+                    'create_task', 'update_task', 'toggle_task', 'reorder_task', 'delete_task' => $this->saveTask($input, $userId),
                     default => $this->fail(400, 'Unknown action'),
                 };
             });
@@ -405,6 +405,14 @@ class WorkspaceController
             $this->fail(404, 'Задача не найдена.');
         }
         $boardOwnerId = (int) $board->user_id;
+        if ($action === 'delete_task') {
+            if (!(bool) $task->is_completed) {
+                $this->fail(409, 'Можно удалить только выполненную задачу.');
+            }
+            DB::table('tasks')->where('id', $id)->where('user_id', $boardOwnerId)->delete();
+
+            return $this->success(['deleted' => true]);
+        }
         if ($action === 'reorder_task') {
             $ids = DB::table('tasks')->where('list_id', $task->list_id)->where('user_id', $boardOwnerId)
                 ->orderBy('sort_order')->orderBy('id')->lockForUpdate()->pluck('id')->map(fn ($value) => (int) $value)->all();

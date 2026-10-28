@@ -806,9 +806,12 @@
   &__task-title { position: relative; min-width: 0; flex: 1; overflow-wrap: anywhere; }
   &__task.is-completed,
   &__task.is-completed .task-list-card__task-title { color: var(--workspace-muted); }
+  &__task.is-completing .task-list-card__task-title { text-decoration-line: line-through; text-decoration-color: currentColor; text-decoration-thickness: 1px; animation: task-title-strike 320ms ease-out both; }
   &__task-edit { min-width: 0; flex: 1; padding: 4px 6px; border: 1px solid var(--workspace-border); border-radius: 4px; background: var(--workspace-surface); color: var(--workspace-text); font: inherit; font-size: inherit; }
   &__task-menu { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--workspace-muted); cursor: grab; visibility: hidden; opacity: 0; svg { width: 18px; height: 18px; } &:hover { background: var(--workspace-hover); color: var(--workspace-text); } &:active { cursor: grabbing; } }
-  &__tasks li:hover &__task-menu, &__tasks li:focus-within &__task-menu { visibility: visible; opacity: 1; }
+  &__task-delete { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--workspace-muted); cursor: pointer; visibility: hidden; opacity: 0; transition: color 140ms ease, background-color 140ms ease, opacity 140ms ease; svg { width: 17px; height: 17px; } &:hover, &:focus-visible { background: rgb(181 71 71 / 10%); color: #b54747; } }
+  &__tasks li:hover &__task-menu, &__tasks li:focus-within &__task-menu,
+  &__tasks li:hover &__task-delete, &__tasks li:focus-within &__task-delete { visibility: visible; opacity: 1; }
   &__add { display: flex; min-height: 44px; align-items: center; gap: 10px; margin: 13px 0 14px; padding: 0 9px 0 12px; border: 1px solid var(--workspace-border); border-radius: 7px; background: transparent; transition: border-color 150ms ease, box-shadow 150ms ease; &:focus-within { border-color: #93afd2; box-shadow: 0 0 0 3px rgb(52 120 212 / 8%); } input { flex: 1; min-width: 0; padding: 10px 0; border: 0; outline: 0; background: transparent; color: var(--workspace-text); font: inherit; font-size: .82rem; &::placeholder { color: var(--workspace-muted); } } button { flex: none; padding: 5px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--workspace-text); font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer; transition: background-color 140ms ease; &:hover { background: var(--workspace-hover); } } }
   &__completed { margin: 0 -22px; padding: 0 22px; border-top: 1px solid var(--workspace-border); background: transparent; font-size: .8rem; > button { display: flex; width: 100%; min-height: 48px; align-items: center; gap: 9px; padding: 0; border: 0; background: transparent; color: var(--workspace-muted); font: inherit; text-align: left; cursor: pointer; &:hover { color: var(--workspace-text); } > svg { width: 16px; height: 16px; } &[aria-expanded='true'] > svg { transform: rotate(180deg); } } }
   &__completed-label { font-weight: 600; }
@@ -823,8 +826,13 @@
   &__error { margin: 10px 0; color: #b33; font-size: .8rem; }
 }
 
+@keyframes task-title-strike {
+  from { text-decoration-color: transparent; }
+  to { text-decoration-color: currentColor; }
+}
+
 @media (hover: none) {
-  .task-list-card__task-menu { visibility: visible; opacity: 1; }
+  .task-list-card__task-menu, .task-list-card__task-delete { visibility: visible; opacity: 1; }
 }
 
 .list-delete-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(10 16 26 / 48%); }

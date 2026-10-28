@@ -231,6 +231,23 @@ class WorkspaceTest extends DatabaseTestCase
         $this->assertSame([0, 1, 2], DB::table('tasks')->where('list_id', $list)->orderBy('sort_order')->pluck('sort_order')->all());
     }
 
+    public function test_only_completed_tasks_can_be_deleted(): void
+    {
+        $list = $this->list($this->user->id, $this->board);
+        $pending = $this->task($this->user->id, $list, 'Открытая задача');
+        $completed = $this->task($this->user->id, $list, 'Готово', 1);
+        DB::table('tasks')->where('id', $completed)->update(['is_completed' => true]);
+
+        $this->postWorkspace(['action' => 'delete_task', 'task_id' => $pending])->assertStatus(409)
+            ->assertExactJson(['success' => false, 'error' => 'Можно удалить только выполненную задачу.']);
+        $this->assertDatabaseHas('tasks', ['id' => $pending]);
+
+        $this->postWorkspace(['action' => 'delete_task', 'task_id' => $completed])->assertOk()
+            ->assertExactJson(['success' => true, 'data' => ['deleted' => true]]);
+        $this->assertDatabaseMissing('tasks', ['id' => $completed]);
+        $this->assertDatabaseHas('tasks', ['id' => $pending]);
+    }
+
     public function test_foreign_and_missing_resources_cannot_be_changed(): void
     {
         $foreignList = $this->list($this->other->id, $this->foreignBoard);
@@ -250,6 +267,7 @@ class WorkspaceTest extends DatabaseTestCase
             $this->postWorkspace(['action' => 'toggle_task', 'task_id' => $id, 'is_completed' => true])->assertNotFound();
             $this->postWorkspace(['action' => 'update_task', 'task_id' => $id, 'title' => 'Hack'])->assertNotFound();
             $this->postWorkspace(['action' => 'reorder_task', 'task_id' => $id, 'target_task_id' => $id])->assertNotFound();
+            $this->postWorkspace(['action' => 'delete_task', 'task_id' => $id])->assertNotFound();
         }
         $this->assertSame($before, $this->state());
     }
@@ -381,7 +399,7 @@ class WorkspaceTest extends DatabaseTestCase
         return [
             'missing action' => [[], 400, 'Unknown action'],
             'array action' => [['action' => []], 400, 'Unknown action'],
-            'task deletion not invented' => [['action' => 'delete_task'], 400, 'Unknown action'],
+            'task deletion needs an id' => [['action' => 'delete_task'], 422, 'Некорректная задача.'],
             'empty board' => [['action' => 'create_board', 'name' => ' '], 422, $boardError],
             'long board' => [['action' => 'create_board', 'name' => str_repeat('я', 61)], 422, $boardError],
             'board controls' => [['action' => 'create_board', 'name' => "X\nY"], 422, $boardError],
