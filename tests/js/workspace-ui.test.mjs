@@ -143,8 +143,12 @@ test('workspace components render safely and guard editing/deletion event handle
 
 test('compiled styles keep multiline task rows flexible and deletion dialogs above fullscreen', () => {
   const css = compile(fileURLToPath(new URL('../../frontend/scss/style.scss', import.meta.url))).css;
-  const rules = new Map([...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => [match[1].trim(), match[2]]));
-  assert.match(rules.get('.task-list-card__tasks'), /grid-template-columns: minmax\(0, 1fr\)/);
+  const rules = new Map();
+  for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!rules.has(match[1].trim())) rules.set(match[1].trim(), match[2]);
+  }
+  assert.match(rules.get('.task-list-card__tasks'), /display: block/);
+  assert.match(rules.get('.task-list-card__tasks li'), /display: flow-root/);
   assert.match(rules.get('.task-list-card__tasks li'), /min-width: 0/);
   assert.match(rules.get('.task-list-card__task-title'), /overflow-wrap: anywhere/);
   assert.match(rules.get('.task-list-card__task-title'), /flex: 1 1 0/);
@@ -158,4 +162,20 @@ test('compiled styles keep multiline task rows flexible and deletion dialogs abo
     assert.match(rules.get(selector), /backwards/);
     assert.doesNotMatch(rules.get(selector), /both|forwards/);
   }
+});
+
+test('mobile styles keep the header and list options compact and use vertical fullscreen transitions', () => {
+  const css = compile(fileURLToPath(new URL('../../frontend/scss/style.scss', import.meta.url))).css;
+  assert.match(css, /\.workspace-header\s*\{\s*min-height: 0;\s*grid-template-columns: auto minmax\(0, 1fr\) auto/);
+  assert.match(css, /\.workspace-search\s*\{\s*grid-column: 2;\s*grid-row: 1/);
+  assert.match(css, /\.workspace-header__notifications\s*\{\s*display: none/);
+  assert.match(css, /\.workspace-sidebar__theme\s*\{\s*display: flex/);
+  assert.match(css, /\.profile-menu__notifications\s*\{\s*display: block/);
+  assert.match(css, /\.list-creator__toolbar\s*\{\s*display: flex;\s*flex-wrap: nowrap/);
+  assert.match(css, /\.list-creator__toolbar > \.list-creator__extra-row\s*\{\s*display: none/);
+  assert.match(css, /\.list-creator__toolbar\.is-more-open > \.list-creator__extra-row\s*\{[^}]*display: flex/);
+  assert.match(css, /\.list-creator__date \.list-date-picker__panel\s*\{[^}]*left: 12px;\s*width: auto/);
+  assert.match(css, /\.list-theme-picker\s*\{\s*gap: 9px/);
+  assert.match(css, /\.list-focus-overlay__navigation\s*\{\s*display: none/);
+  assert.match(css, /\.list-focus-overlay__dialog\.is-entering-next\s*\{\s*animation-name: list-focus-mobile-in-next/);
 });

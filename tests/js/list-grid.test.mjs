@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const source = await readFile(new URL('../../frontend/js/workspace/listGrid.js', import.meta.url), 'utf8');
-const { adjacentLists, cardBounds, findGridTarget, groupTasksByList, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { adjacentLists, cardBounds, findGridTarget, groupTasksByList, moveListToSlot, masonrySlots, verticalSwipe } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const lists = [
   { id: 1, board_id: 10, is_pinned: true },
@@ -50,6 +50,16 @@ test('task grouping visits each task only once on a large board', () => {
   assert.equal(visits, tasks.length);
   assert.equal(grouped.size, 300);
   assert.equal([...grouped.values()].flat().length, tasks.length);
+});
+
+test('mobile vertical swipes advance and return without hijacking scroll or horizontal gestures', () => {
+  const start = { x: 170, y: 320 };
+  assert.equal(verticalSwipe(start, { x: 190, y: 210 }), 1);
+  assert.equal(verticalSwipe(start, { x: 155, y: 430 }), -1);
+  assert.equal(verticalSwipe(start, { x: 60, y: 295 }), 0);
+  assert.equal(verticalSwipe(start, { x: 170, y: 275 }), 0);
+  assert.equal(verticalSwipe(start, { x: 190, y: 210 }, 60), 0);
+  assert.equal(verticalSwipe(null, { x: 190, y: 210 }), 0);
 });
 
 test('focused list has only its actual neighbors, wrapping at the ends', () => {

@@ -375,6 +375,7 @@ export function Workspace() {
   const theme = themePreference === 'system' ? systemTheme : themePreference;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreListOptionsOpen, setMoreListOptionsOpen] = useState(false);
   const [csrfToken, setCsrfToken] = useState('');
   const [account, setAccount] = useState(null);
   const [notifications, setNotifications] = useState([]);
@@ -871,6 +872,7 @@ export function Workspace() {
     setFlagPickerOpen(false);
     setListDate(null);
     setDatePickerOpen(false);
+    setMoreListOptionsOpen(false);
     setFeedback('');
   }
 
@@ -929,6 +931,7 @@ export function Workspace() {
       setFlagPickerOpen(false);
       setListDate(null);
       setDatePickerOpen(false);
+      setMoreListOptionsOpen(false);
       setFeedback(descriptionSaveError ? `Список создан, но описание не сохранено: ${descriptionSaveError}` : '');
       await refreshBoardData(board.id);
     } catch (error) {
@@ -1063,7 +1066,7 @@ export function Workspace() {
         </label>
 
         <div className="workspace-header__right">
-          <NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} />
+          <div className="workspace-header__notifications"><NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} /></div>
 
           <details className="profile-menu">
             <summary className="profile-menu__trigger" aria-label="Открыть профиль">
@@ -1076,6 +1079,7 @@ export function Workspace() {
             </summary>
             <div className="profile-menu__panel">
               <p className="profile-menu__account-type">{accountTypeLabels[account.account_type] || 'Аккаунт'}</p>
+              <div className="profile-menu__notifications"><NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} /></div>
               <button className="profile-menu__settings" type="button" onClick={openProfileSettings}><SettingsIcon /><span>Настройки аккаунта</span></button>
               <button className="profile-menu__logout" type="button" onClick={handleLogout}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5m5 5H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></svg><span>Выйти из аккаунта</span></button>
             </div>
@@ -1108,6 +1112,7 @@ export function Workspace() {
       <div className="workspace-layout">
         <aside className="workspace-sidebar" id="workspace-sidebar" aria-label="Фильтры и флаги">
           <header className="workspace-sidebar__mobile-header"><h2>Фильтры</h2><button type="button" aria-label="Закрыть меню" onClick={() => setMobileMenuOpen(false)}>×</button></header>
+          <div className="workspace-sidebar__theme"><span>Тема оформления</span><ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} /></div>
           <nav className="sidebar-filters" aria-label="Быстрые фильтры">
             <button className={`sidebar-filter${filter === 'all' ? ' is-active' : ''}`} type="button" onClick={() => updateFilter('all')}>
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 5h16M4 12h16M4 19h16" /></svg><span>Все списки</span>
@@ -1150,11 +1155,12 @@ export function Workspace() {
 
               {expanded && (
                 <div className="list-creator__options">
-                  <div className="list-creator__toolbar">
+                  <div className={`list-creator__toolbar${moreListOptionsOpen ? ' is-more-open' : ''}`}>
                     <button className={`list-option-button${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} aria-label={important ? 'Убрать важность списка' : 'Сделать список важным'} title="Важный список" onClick={() => setImportant((current) => !current)}>
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
                     </button>
 
+                    <div className="list-creator__extra-row">
                     <details className="list-description-picker">
                       <summary className="list-option-button" aria-label="Добавить описание списка" title="Описание списка">
                         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 5h14M5 10h14M5 15h9M5 19h6"/></svg>
@@ -1184,13 +1190,16 @@ export function Workspace() {
                       </div>
                     </details>
 
-                    <ListDatePicker value={listDate} open={datePickerOpen} onOpenChange={setDatePickerOpen} onChange={setListDate} />
+                    <div className="list-creator__date"><ListDatePicker value={listDate} open={datePickerOpen} onOpenChange={setDatePickerOpen} onChange={setListDate} /></div>
+                    </div>
 
                     <div className="list-theme-picker" role="group" aria-label="Цвет темы списка">
                       {themes.map(([value, label]) => (
                         <button className={`list-theme-swatch${selectedTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={selectedTheme === value} key={value} onClick={() => setSelectedTheme(value)} />
                       ))}
                     </div>
+
+                    <button className="list-option-button list-creator__more" type="button" aria-label={moreListOptionsOpen ? 'Скрыть дополнительные настройки списка' : 'Показать флаг, описание и дату'} aria-expanded={moreListOptionsOpen} onClick={() => { setMoreListOptionsOpen((current) => !current); setFlagPickerOpen(false); setDatePickerOpen(false); }}><PlusIcon /></button>
 
                   </div>
                   {feedback && <p className="list-creator__feedback" role="alert">{feedback}</p>}

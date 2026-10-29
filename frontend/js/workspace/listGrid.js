@@ -18,6 +18,15 @@ export function adjacentLists(lists, focusedId) {
   };
 }
 
+// Upwards advances, downwards goes back; horizontal gestures and scrolling stay native.
+export function verticalSwipe(start, end, scrollDistance = 0) {
+  if (!start || !end || Math.abs(scrollDistance) > 12) return 0;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (Math.abs(dy) < 70 || Math.abs(dy) < Math.abs(dx) * 1.5) return 0;
+  return dy < 0 ? 1 : -1;
+}
+
 // Group once per workspace response instead of scanning all tasks for every card render.
 export function groupTasksByList(tasks) {
   const grouped = new Map();

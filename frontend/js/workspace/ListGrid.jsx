@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot } from './listGrid.js';
+import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot, verticalSwipe } from './listGrid.js';
 
 const motionOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
 
@@ -24,6 +24,7 @@ export function ListGrid({ lists, onSwap, children }) {
   const dialogRef = useRef(null);
   const [shortFocusedList, setShortFocusedList] = useState(false);
   const slideTimer = useRef(null);
+  const touchStart = useRef(null);
   const focusReturn = useRef(null);
   const focusScrollTop = useRef(0);
   const focusedIdRef = useRef(focusedId);
@@ -391,6 +392,23 @@ export function ListGrid({ lists, onSwap, children }) {
     slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), 340);
   }
 
+  function startSwipe(event) {
+    touchStart.current = null;
+    if (event.touches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches
+        || event.target.closest('button, input, textarea, select, summary, a, [draggable="true"], [role="alertdialog"]')) return;
+    const touch = event.touches[0];
+    touchStart.current = { x: touch.clientX, y: touch.clientY, scrollY: window.scrollY };
+  }
+
+  function endSwipe(event) {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start || event.changedTouches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
+    const touch = event.changedTouches[0];
+    const direction = verticalSwipe(start, { x: touch.clientX, y: touch.clientY }, window.scrollY - start.scrollY);
+    if (direction) focusAdjacentList(direction);
+  }
+
   function openList(id, target) {
     if (savingRef.current || gesture.current?.active) return;
     setSlide(null);
@@ -420,7 +438,7 @@ export function ListGrid({ lists, onSwap, children }) {
       {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true" inert>{children(previousList)}</div>}
       {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true" inert>{children(nextList)}</div>}
       {leavingList && leavingList.id !== focusedId && <div className={`list-focus-overlay__dialog is-leaving-${slide.direction > 0 ? 'next' : 'previous'}`} aria-hidden="true" inert>{children(leavingList)}</div>}
-      <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1}>
+      <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1} onTouchStart={startSwipe} onTouchEnd={endSwipe} onTouchCancel={() => { touchStart.current = null; }}>
         {children(focusedList)}
         <button ref={closeButton} className="list-focus-overlay__close" type="button" aria-label="Закрыть список" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
