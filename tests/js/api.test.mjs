@@ -121,3 +121,51 @@ test('malformed JSON response shapes produce a readable error, not a TypeError',
     });
   }
 });
+
+test('all JSON mutations retain their endpoint, action, credentials and CSRF header', async (t) => {
+  const api = await freshApi();
+  const cases = [
+    [() => api.updateProfile({ username: 'Name' }, 'token'), '/api/profile.php', { username: 'Name' }],
+    [() => api.sendAuthRequest('login', { username: 'Name' }, 'token'), '/api/auth.php', { action: 'login', username: 'Name' }],
+    [() => api.createTaskList({ name: 'List' }, 'token'), '/api/workspace.php', { action: 'create_list', name: 'List' }],
+    [() => api.createBoard({ name: 'Board' }, 'token'), '/api/workspace.php', { action: 'create_board', name: 'Board' }],
+    [() => api.updateWorkspace({ action: 'toggle_task', task_id: 1 }, 'token'), '/api/workspace.php', { action: 'toggle_task', task_id: 1 }],
+  ];
+  for (const [call, endpoint, body] of cases) {
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      assert.equal(url, endpoint);
+      assert.equal(options.method, 'POST');
+      assert.equal(options.credentials, 'same-origin');
+      assert.equal(options.headers['X-CSRF-Token'], 'token');
+      assert.equal(options.headers['Content-Type'], 'application/json');
+      assert.deepEqual(JSON.parse(options.body), body);
+      return new Response(JSON.stringify({ success: true, data: { ok: true } }));
+    });
+    assert.deepEqual(await call(), { ok: true });
+  }
+});
+
+test('search cancellation forwards AbortSignal without converting it into an API failure', async (t) => {
+  const controller = new AbortController();
+  const api = await freshApi();
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    assert.equal(url, '/api/workspace.php?search=literal%25_%26');
+    assert.equal(options.signal, controller.signal);
+    assert.equal(options.credentials, 'same-origin');
+    return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true }));
+  });
+  const pending = api.searchWorkspace('literal%_&', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+});
+
+test('failed mutations are not retried automatically', async (t) => {
+  let count = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    count++;
+    throw new Error('Connection failed');
+  });
+  const api = await freshApi();
+  await assert.rejects(api.createTaskList({ name: 'Only once' }, 'token'), /Connection failed/);
+  assert.equal(count, 1);
+});

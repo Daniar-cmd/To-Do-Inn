@@ -4,9 +4,11 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -99,6 +101,80 @@ class WorkspaceTest extends DatabaseTestCase
         Auth::login($this->user);
         $this->postWorkspace(['action' => 'create_board', 'name' => 'Extra org board', 'board_type' => 'corporate',
             'corporate_account_id' => $accountId])->assertCreated()->assertJsonPath('data.board.corporate_account_id', $accountId);
+    }
+
+    public function test_corporate_board_creator_needs_current_accepted_membership_for_reads_and_writes(): void
+    {
+        $accountId = DB::table('corporate_accounts')->insertGetId([
+            'root_username' => '@Audit'.bin2hex(random_bytes(3)), 'root_email' => 'audit@example.com',
+            'root_password_hash' => 'not-used-in-this-test', 'organization_name' => 'Audit Org',
+        ]);
+        $board = DB::table('boards')->insertGetId([
+            'user_id' => $this->user->id, 'corporate_account_id' => $accountId,
+            'name' => 'Restricted org board', 'board_type' => 'corporate',
+        ]);
+        $list = $this->list($this->user->id, $board, 'Private audit list');
+        $this->task($this->user->id, $list, 'Private audit task');
+        $member = DB::table('corporate_account_members')->insertGetId([
+            'corporate_account_id' => $accountId, 'user_id' => $this->user->id,
+            'email' => 'audit-member@example.com', 'role' => 'owner', 'accepted_at' => now(),
+        ]);
+        $this->request(query: '?board_id='.$board)->assertOk()->assertJsonCount(1, 'data.lists');
+
+        DB::table('corporate_account_members')->where('id', $member)->update(['accepted_at' => null]);
+        foreach ([false, true] as $removed) {
+            if ($removed) {
+                DB::table('corporate_account_members')->where('id', $member)->delete();
+            }
+            $this->request()->assertOk()->assertJsonCount(1, 'data.boards')->assertJsonCount(0, 'data.lists');
+            $this->request(query: '?board_id='.$board)->assertNotFound();
+            $this->request(query: '?search=Private')->assertOk()->assertJsonCount(0, 'data.results');
+            $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Not allowed'])->assertNotFound();
+        }
+    }
+
+    public function test_workspace_write_limit_is_account_scoped_and_preserves_csrf_order(): void
+    {
+        for ($attempt = 0; $attempt < 90; $attempt++) {
+            $this->postWorkspace(['action' => 'unknown'])->assertBadRequest();
+        }
+        $before = $this->state();
+        $this->request('POST', body: ['action' => 'create_list'], token: false)->assertForbidden();
+        $this->request('POST', raw: '{')->assertBadRequest();
+        $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board, 'name' => 'Limited'])
+            ->assertStatus(429)->assertHeader('Retry-After');
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.20', 'HTTP_X_FORWARDED_FOR' => '198.51.100.1']);
+        $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->board, 'name' => 'Still limited'])->assertStatus(429);
+        $this->request()->assertOk();
+        $this->assertSame($before, $this->state());
+
+        Auth::login($this->other);
+        $this->postWorkspace(['action' => 'create_list', 'board_id' => $this->foreignBoard, 'name' => 'Allowed'])->assertCreated();
+    }
+
+    public function test_workspace_read_and_invitation_limits_are_enforced_before_work(): void
+    {
+        for ($attempt = 0; $attempt < 120; $attempt++) {
+            $this->request()->assertOk();
+        }
+        $this->request(query: '?search=Anything')->assertStatus(429)->assertHeader('Retry-After');
+        for ($attempt = 0; $attempt < 20; $attempt++) {
+            $this->postWorkspace(['action' => 'invite_member'])->assertUnprocessable();
+        }
+        Mail::fake();
+        $this->postWorkspace(['action' => 'invite_member'])->assertStatus(429)->assertHeader('Retry-After');
+        Mail::assertNothingSent();
+    }
+
+    public function test_workspace_ip_limit_does_not_trust_forwarding_headers(): void
+    {
+        $request = Request::create('/api/workspace.php', 'GET', server: [
+            'REMOTE_ADDR' => '203.0.113.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.9', 'HTTP_CF_CONNECTING_IP' => '198.51.100.10',
+        ]);
+        $request->setUserResolver(fn () => $this->user);
+        $limits = RateLimiter::limiter('workspace')($request);
+        $this->assertSame('workspace-ip:203.0.113.5', $limits[0]->key);
+        $this->assertSame(300, $limits[0]->maxAttempts);
     }
 
     public function test_only_corporate_owner_can_invite_members(): void

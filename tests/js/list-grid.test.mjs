@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const source = await readFile(new URL('../../frontend/js/workspace/listGrid.js', import.meta.url), 'utf8');
-const { adjacentLists, cardBounds, findGridTarget, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { adjacentLists, cardBounds, findGridTarget, groupTasksByList, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const lists = [
   { id: 1, board_id: 10, is_pinned: true },
@@ -28,6 +28,28 @@ test('card measurements keep actual dimensions while an animation scales the pai
     assert.equal(positions[1].row, 270);
   }
   assert.equal(cardBounds(null), null);
+});
+
+test('task grouping preserves server order and references without changing the input', () => {
+  const tasks = Object.freeze([
+    Object.freeze({ id: 1, list_id: 20 }), Object.freeze({ id: 2, list_id: 10 }),
+    Object.freeze({ id: 3, list_id: 20 }),
+  ]);
+  const grouped = groupTasksByList(tasks);
+  assert.deepEqual(grouped.get(20), [tasks[0], tasks[2]]);
+  assert.equal(grouped.get(20)[0], tasks[0]);
+  assert.deepEqual(grouped.get(10), [tasks[1]]);
+  assert.equal(grouped.get(99), undefined);
+  assert.equal(groupTasksByList([]).size, 0);
+});
+
+test('task grouping visits each task only once on a large board', () => {
+  let visits = 0;
+  const tasks = Array.from({ length: 10000 }, (_, id) => ({ id, get list_id() { visits++; return id % 300; } }));
+  const grouped = groupTasksByList(tasks);
+  assert.equal(visits, tasks.length);
+  assert.equal(grouped.size, 300);
+  assert.equal([...grouped.values()].flat().length, tasks.length);
 });
 
 test('focused list has only its actual neighbors, wrapping at the ends', () => {

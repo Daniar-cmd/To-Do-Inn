@@ -28,6 +28,8 @@ export function ListGrid({ lists, onSwap, children }) {
   const focusScrollTop = useRef(0);
   const focusedIdRef = useRef(focusedId);
   focusedIdRef.current = focusedId;
+  const listsRef = useRef(lists);
+  listsRef.current = lists;
   const orderKey = lists.map((list) => list.id).join(',');
   const focusedIndex = lists.findIndex((list) => list.id === focusedId);
   const focusedList = lists[focusedIndex];
@@ -142,7 +144,7 @@ export function ListGrid({ lists, onSwap, children }) {
       observer?.disconnect();
       window.removeEventListener('resize', measure);
     };
-  });
+  }, [focusedId]);
 
   useEffect(() => {
     if (!shortFocusedList) return undefined;
@@ -168,7 +170,7 @@ export function ListGrid({ lists, onSwap, children }) {
         return;
       }
       const isTextEntry = event.target.closest?.('input, textarea, select, [contenteditable="true"]');
-      if (!isTextEntry && (event.metaKey || event.ctrlKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && lists.length > 1) {
+      if (!isTextEntry && (event.metaKey || event.ctrlKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && listsRef.current.length > 1) {
         event.preventDefault();
         focusAdjacentList(event.key === 'ArrowRight' ? 1 : -1);
         return;
@@ -378,12 +380,12 @@ export function ListGrid({ lists, onSwap, children }) {
   }
 
   function focusAdjacentList(direction) {
-    if (lists.length < 2) return;
-    const adjacent = adjacentLists(lists, focusedId);
+    if (listsRef.current.length < 2) return;
+    const adjacent = adjacentLists(listsRef.current, focusedIdRef.current);
     const nextId = (direction > 0 ? adjacent.next : adjacent.previous)?.id;
     if (nextId === undefined) return;
     window.clearTimeout(slideTimer.current);
-    setSlide({ fromId: focusedId, direction });
+    setSlide({ fromId: focusedIdRef.current, direction });
     setFocusedId(nextId);
     window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
     slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), 340);

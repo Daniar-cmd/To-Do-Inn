@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Mail\CorporateAccountInvitation;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -58,13 +59,7 @@ class WorkspaceController
 
     private function read(Request $request, int $userId): JsonResponse
     {
-        $corporateAccountIds = $this->corporateAccountIds($userId);
-        $boards = DB::table('boards')->where(function ($query) use ($userId, $corporateAccountIds): void {
-            $query->where('user_id', $userId);
-            if ($corporateAccountIds !== []) {
-                $query->orWhereIn('corporate_account_id', $corporateAccountIds);
-            }
-        })->orderByRaw('CASE WHEN corporate_account_id IS NOT NULL THEN 0 ELSE 1 END')
+        $boards = $this->accessibleBoards($userId)->orderByRaw('CASE WHEN corporate_account_id IS NOT NULL THEN 0 ELSE 1 END')
             ->orderByDesc('is_default')->orderBy('id')
             ->get(['id', 'user_id', 'corporate_account_id', 'name', 'description', 'board_type', 'lists_order_customized']);
         if ($boards->isEmpty()) {
@@ -603,29 +598,25 @@ class WorkspaceController
             ->delete();
     }
 
-    /** @return list<int> */
-    private function corporateAccountIds(int $userId): array
+    private function accessibleBoards(int $userId): Builder
     {
-        return DB::table('corporate_account_members')->where('user_id', $userId)
-            ->whereNotNull('accepted_at')->pluck('corporate_account_id')->map(fn ($id) => (int) $id)->all();
+        // Corporate boards always require accepted membership, even for their original creator.
+        // Use the same scope for listing, search and mutations to avoid divergent access rules.
+        return DB::table('boards')->where(function (Builder $query) use ($userId): void {
+            $query->where(fn (Builder $personal) => $personal->where('user_id', $userId)->whereNull('corporate_account_id'))
+                ->orWhereExists(function (Builder $members) use ($userId): void {
+                    $members->selectRaw('1')->from('corporate_account_members as members')
+                        ->whereColumn('members.corporate_account_id', 'boards.corporate_account_id')
+                        ->where('members.user_id', $userId)->whereNotNull('members.accepted_at');
+                });
+        });
     }
 
     private function accessibleBoard(int $boardId, int $userId, bool $lock = false): ?object
     {
-        $board = DB::table('boards')->where('id', $boardId)->first();
-        if ($board === null) {
-            return null;
-        }
-        if ((int) $board->user_id === $userId && $board->corporate_account_id === null) {
-            return $lock ? DB::table('boards')->where('id', $boardId)->lockForUpdate()->first() : $board;
-        }
-        if ($board->corporate_account_id === null || !DB::table('corporate_account_members')
-            ->where('corporate_account_id', $board->corporate_account_id)->where('user_id', $userId)
-            ->whereNotNull('accepted_at')->exists()) {
-            return null;
-        }
+        $query = $this->accessibleBoards($userId)->where('boards.id', $boardId);
 
-        return $lock ? DB::table('boards')->where('id', $boardId)->lockForUpdate()->first() : $board;
+        return ($lock ? $query->lockForUpdate() : $query)->first();
     }
 
     private function requireCorporateOwner(int $corporateAccountId, int $userId): void

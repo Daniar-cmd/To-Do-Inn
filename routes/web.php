@@ -8,7 +8,7 @@ use App\Http\Middleware\PrepareWorkspaceRequest;
 use App\Http\Middleware\VerifyApiCsrfToken;
 use Illuminate\Support\Facades\Route;
 
-// The preview router sends this URL to Laravel; the main legacy server still runs its PHP file.
+// Keep the legacy URL contract; requests are served by Laravel, not the preserved PHP files.
 // Unsupported methods are explicitly rejected by PrepareAuthRequest before the CSRF check.
 $authRoute = Route::any('/api/auth.php', AuthController::class);
 if (! app()->environment('local')) {
@@ -23,4 +23,4 @@ Route::match(['GET', 'POST', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TRACE
 Route::match(['GET', 'POST', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TRACE', 'CONNECT'], '/api/workspace.php', WorkspaceController::class)
     // Preserve legacy auth/method/content-type ordering; preparation still explicitly invokes CSRF.
     ->withoutMiddleware(VerifyApiCsrfToken::class)
-    ->middleware(['auth', PrepareWorkspaceRequest::class]);
+    ->middleware(['auth', PrepareWorkspaceRequest::class, 'throttle:workspace']);

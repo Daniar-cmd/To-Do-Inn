@@ -18,6 +18,17 @@ export function adjacentLists(lists, focusedId) {
   };
 }
 
+// Group once per workspace response instead of scanning all tasks for every card render.
+export function groupTasksByList(tasks) {
+  const grouped = new Map();
+  for (const task of tasks) {
+    const listId = task.list_id;
+    if (!grouped.has(listId)) grouped.set(listId, []);
+    grouped.get(listId).push(task);
+  }
+  return grouped;
+}
+
 // Visual position may be animated, but layout dimensions must never include its scale.
 export function cardBounds(card, scrollX = 0, scrollY = 0) {
   if (!card) return null;

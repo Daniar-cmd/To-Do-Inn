@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
 import { NotificationsMenu } from '../NotificationsMenu.jsx';
 import { ListGrid } from './ListGrid.jsx';
 import { ListDeleteDialog } from './ListDeleteDialog.jsx';
 import { ListDatePicker } from './ListDatePicker.jsx';
 import { formatListDueDate } from './listDate.js';
-import { moveListToSlot } from './listGrid.js';
+import { groupTasksByList, moveListToSlot } from './listGrid.js';
 import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
 
 const accountTypeLabels = {
@@ -417,6 +417,7 @@ export function Workspace() {
   const [flags, setFlags] = useState([]);
   const [lists, setLists] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const tasksByList = useMemo(() => groupTasksByList(tasks), [tasks]);
   const [filter, setFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
@@ -531,6 +532,7 @@ export function Workspace() {
   useEffect(() => {
     if (!csrfToken) return undefined;
     let active = true;
+    const controller = new AbortController();
     sendAuthRequest('get_notifications', {}, csrfToken)
       .then((data) => { if (active) setNotifications(data.notifications || []); })
       .catch((error) => { if (active) setNotificationError(error.message); });
@@ -566,7 +568,7 @@ export function Workspace() {
     setSearchResults(null);
     setSearchError('');
     const timeout = window.setTimeout(() => {
-      searchWorkspace(query)
+      searchWorkspace(query, { signal: controller.signal })
         .then(({ results }) => { if (active && requestId === searchRequestId.current) setSearchResults(results.filter((list) => !removedListIds.current.has(list.id))); })
         .catch((error) => { if (active && requestId === searchRequestId.current) setSearchError(error.message); })
         .finally(() => { if (active && requestId === searchRequestId.current) setSearchLoading(false); });
@@ -575,6 +577,7 @@ export function Workspace() {
     return () => {
       active = false;
       window.clearTimeout(timeout);
+      controller.abort();
     };
   }, [searchQuery]);
 
@@ -1206,7 +1209,7 @@ export function Workspace() {
                 <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
               </div>)}
             </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} onSwap={reorderListCards}>
-              {(list, dragHandle) => <ListCard list={list} flags={flags} tasks={tasks.filter((task) => task.list_id === list.id)} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} />}
+              {(list, dragHandle) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} />}
             </ListGrid>}
           </section>
           </>}

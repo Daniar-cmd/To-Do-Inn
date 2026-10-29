@@ -106,5 +106,19 @@ class AppServiceProvider extends ServiceProvider
                     ->by('profile-'.($request->isMethod('POST') ? 'write:' : 'read:').$request->user()->getAuthIdentifier()),
             ];
         });
+
+        RateLimiter::for('workspace', function (Request $request): array {
+            $userId = $request->user()->getAuthIdentifier();
+            $read = $request->isMethod('GET');
+            $limits = [
+                Limit::perMinute(300)->by('workspace-ip:'.$request->ip()),
+                Limit::perMinute($read ? 120 : 90)->by('workspace-'.($read ? 'read:' : 'write:').$userId),
+            ];
+            if ($request->isMethod('POST') && $request->json('action') === 'invite_member') {
+                $limits[] = Limit::perHour(20)->by('workspace-invite:'.$userId);
+            }
+
+            return $limits;
+        });
     }
 }
