@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { adjacentLists, findGridTarget, masonrySlots, moveListToSlot } from './listGrid.js';
+import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot } from './listGrid.js';
 
 const motionOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
 
@@ -25,6 +25,7 @@ export function ListGrid({ lists, onSwap, children }) {
   const [shortFocusedList, setShortFocusedList] = useState(false);
   const slideTimer = useRef(null);
   const focusReturn = useRef(null);
+  const focusScrollTop = useRef(0);
   const focusedIdRef = useRef(focusedId);
   focusedIdRef.current = focusedId;
   const orderKey = lists.map((list) => list.id).join(',');
@@ -40,9 +41,8 @@ export function ListGrid({ lists, onSwap, children }) {
   function capturePositions() {
     const positions = new Map();
     for (const id of slots.current.keys()) {
-      const bounds = cardFor(id)?.getBoundingClientRect();
-      if (bounds) positions.set(id, { left: bounds.left + window.scrollX, top: bounds.top + window.scrollY,
-        width: bounds.width, height: bounds.height });
+      const bounds = cardBounds(cardFor(id), window.scrollX, window.scrollY);
+      if (bounds) positions.set(id, bounds);
     }
     return positions;
   }
@@ -66,7 +66,8 @@ export function ListGrid({ lists, onSwap, children }) {
     const cardGap = Number.parseFloat(styles.getPropertyValue('--list-card-gap')) || 18;
     const columns = styles.gridTemplateColumns.trim().split(/\s+/).length;
     layoutWidth.current = grid.clientWidth;
-    const positions = masonrySlots(orderedLists.map((item) => cardFor(item.id)?.getBoundingClientRect().height || 0), columns, rowHeight, rowGap, cardGap);
+    // Transforms belong to the animation, not to the layout's actual card height.
+    const positions = masonrySlots(orderedLists.map((item) => cardFor(item.id)?.offsetHeight || 0), columns, rowHeight, rowGap, cardGap);
     for (const [index, item] of orderedLists.entries()) {
       const slot = slots.current.get(item.id);
       if (!slot) continue;
@@ -90,23 +91,25 @@ export function ListGrid({ lists, onSwap, children }) {
       card.style.removeProperty('transform');
       const slot = slots.current.get(id);
       delete slot.dataset.previewMoving;
-      const rect = card.getBoundingClientRect();
-      const bounds = { left: rect.left + window.scrollX, top: rect.top + window.scrollY, width: rect.width, height: rect.height };
+      const bounds = cardBounds(card, window.scrollX, window.scrollY);
       const before = previous.get(id);
       next.set(id, bounds);
       if (!before || !card.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
       const dx = before.left - bounds.left;
       const dy = before.top - bounds.top;
-      const scaleX = before.width / bounds.width;
-      const scaleY = before.height / bounds.height;
-      if (Math.abs(dx) + Math.abs(dy) > 1 || Math.abs(scaleX - 1) + Math.abs(scaleY - 1) > .01) {
-        const frames = [{ transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})` }];
+      // Only move cards: scaling live text and controls causes repaint artifacts in WebKit.
+      if (Math.abs(dx) + Math.abs(dy) > 1) {
+        const frames = [{ transform: `translate(${dx}px, ${dy}px)` }];
         if (draggedId !== null) {
           slot.dataset.previewMoving = 'true';
         }
-        frames.push({ transform: 'translate(0, 0) scale(1)' });
+        frames.push({ transform: 'translate(0, 0)' });
         const animation = card.animate(frames, { ...motionOptions, duration: draggedId === null ? 300 : 380 });
-        animation.onfinish = () => { delete slot.dataset.previewMoving; };
+        animation.onfinish = () => {
+          delete slot.dataset.previewMoving;
+          // Do not retain an identity transform/containing block after the animation.
+          animation.cancel();
+        };
       }
     }
     return next;
@@ -158,6 +161,7 @@ export function ListGrid({ lists, onSwap, children }) {
     (closeButton.current || dialogRef.current)?.focus({ preventScroll: true });
 
     function handleKeyDown(event) {
+      if (event.defaultPrevented || event.target.closest?.('.list-delete-dialog')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         setFocusedId(null);
@@ -195,7 +199,8 @@ export function ListGrid({ lists, onSwap, children }) {
       if (shell) shell.inert = previouslyInert;
       // Keep the return target while switching between neighboring lists.
       if (focusedIdRef.current === null) {
-        if (focusReturn.current?.isConnected) focusReturn.current.focus();
+        window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
+        if (focusReturn.current?.isConnected) focusReturn.current.focus({ preventScroll: true });
         focusReturn.current = null;
       }
     };
@@ -380,6 +385,7 @@ export function ListGrid({ lists, onSwap, children }) {
     window.clearTimeout(slideTimer.current);
     setSlide({ fromId: focusedId, direction });
     setFocusedId(nextId);
+    window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
     slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), 340);
   }
 
@@ -387,6 +393,7 @@ export function ListGrid({ lists, onSwap, children }) {
     if (savingRef.current || gesture.current?.active) return;
     setSlide(null);
     focusReturn.current = target;
+    focusScrollTop.current = window.scrollY;
     setFocusedId(id);
   }
 
@@ -395,7 +402,7 @@ export function ListGrid({ lists, onSwap, children }) {
     {error && <p className="task-list-card__error" role="alert">{error}</p>}
     <div ref={gridRef} className={`workspace-lists__items list-grid${dragId !== null ? ' is-dragging' : ''}`} aria-busy={saving}>
       {lists.map((list) => <div key={list.id} ref={(node) => { if (node) slots.current.set(list.id, node); else slots.current.delete(list.id); }} className={`list-grid__slot${list.id === dragId ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
-        if (focusedId !== null || event.target.closest('.task-list-card__meta-tags, button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
+        if (focusedId !== null || event.target.closest('.task-list-card__meta-tags, .task-list-card__task-title, [role="dialog"], [role="alertdialog"], button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
         openList(list.id, event.currentTarget);
       }}>
         {children(list, {
@@ -406,7 +413,7 @@ export function ListGrid({ lists, onSwap, children }) {
         })}
       </div>)}
     </div>
-    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList ? undefined : { top: `${window.scrollY}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
+    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList ? undefined : { top: `${focusScrollTop.current}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
       <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр списка" onClick={() => setFocusedId(null)} />
       {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true" inert>{children(previousList)}</div>}
       {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true" inert>{children(nextList)}</div>}

@@ -18,6 +18,14 @@ export function adjacentLists(lists, focusedId) {
   };
 }
 
+// Visual position may be animated, but layout dimensions must never include its scale.
+export function cardBounds(card, scrollX = 0, scrollY = 0) {
+  if (!card) return null;
+  const bounds = card.getBoundingClientRect();
+  return { left: bounds.left + scrollX, top: bounds.top + scrollY,
+    width: card.offsetWidth, height: card.offsetHeight };
+}
+
 // Use stable cell rectangles, not the moving/animated cards, including the gaps.
 export function findGridTarget(cells, bounds, x, y) {
   if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return null;

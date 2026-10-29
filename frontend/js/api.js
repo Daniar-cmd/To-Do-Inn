@@ -2,11 +2,22 @@ const authEndpoint = '/api/auth.php';
 const workspaceEndpoint = '/api/workspace.php';
 const profileEndpoint = '/api/profile.php';
 let sessionRequest = null;
+const pendingListDeletions = new Map();
 
 async function readResponse(response) {
-  const result = await response.json();
-  if (!response.ok || !result.success) {
-    throw new Error(result.error || 'Не удалось выполнить запрос. Попробуйте позже.');
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    const error = new Error('Не удалось прочитать ответ сервера. Попробуйте позже.');
+    error.status = response.status;
+    throw error;
+  }
+  if (!response.ok || result?.success !== true) {
+    const error = new Error(typeof result?.error === 'string' ? result.error : 'Не удалось выполнить запрос. Попробуйте позже.');
+    error.status = response.status;
+    error.isApiError = result?.success === false;
+    throw error;
   }
   return result.data;
 }
@@ -102,11 +113,15 @@ export async function updateWorkspace(data, csrfToken) {
   }));
 }
 
-export async function deleteTaskList(listId, csrfToken) {
+export function deleteTaskList(listId, csrfToken) {
+  const key = `${csrfToken}:${listId}`;
+  if (pendingListDeletions.has(key)) return pendingListDeletions.get(key);
   const query = new URLSearchParams({ list_id: String(listId) });
-  return readResponse(await fetch(`${workspaceEndpoint}?${query}`, {
+  const request = fetch(`${workspaceEndpoint}?${query}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: { 'X-CSRF-Token': csrfToken },
-  }));
+  }).then(readResponse).finally(() => pendingListDeletions.delete(key));
+  pendingListDeletions.set(key, request);
+  return request;
 }

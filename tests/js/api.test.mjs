@@ -62,3 +62,62 @@ test('JSON API errors release the pending session request too', async (t) => {
   await assert.rejects(api.getSession(), /Unavailable/);
   assert.equal((await api.getSession()).csrf_token, 'recovered-token');
 });
+
+test('list deletion sends only list_id and CSRF, sharing simultaneous requests', async (t) => {
+  let finish;
+  let count = 0;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    count++;
+    assert.equal(url, '/api/workspace.php?list_id=42');
+    assert.equal(options.method, 'DELETE');
+    assert.equal(options.credentials, 'same-origin');
+    assert.equal(options.headers['X-CSRF-Token'], 'csrf-token');
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  const api = await freshApi();
+  const first = api.deleteTaskList(42, 'csrf-token');
+  const second = api.deleteTaskList(42, 'csrf-token');
+  assert.equal(first, second);
+  assert.equal(count, 1);
+  finish(new Response(JSON.stringify({ success: true, data: { deleted: true } })));
+  assert.deepEqual(await first, { deleted: true });
+});
+
+test('failed list deletions retain API status and allow a later retry', async (t) => {
+  let count = 0;
+  t.mock.method(globalThis, 'fetch', async () => ++count === 1
+    ? new Response(JSON.stringify({ success: false, error: 'Список не найден.' }), { status: 404 })
+    : new Response(JSON.stringify({ success: true, data: { deleted: true } })));
+  const api = await freshApi();
+  await assert.rejects(api.deleteTaskList(42, 'csrf'), (error) => {
+    assert.equal(error.status, 404);
+    assert.equal(error.isApiError, true);
+    assert.equal(error.message, 'Список не найден.');
+    return true;
+  });
+  assert.deepEqual(await api.deleteTaskList(42, 'csrf'), { deleted: true });
+  assert.equal(count, 2);
+});
+
+test('HTML proxy errors are not mistaken for a missing list or leaked to the user', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('<html>Internal server details</html>', { status: 404 }));
+  const api = await freshApi();
+  await assert.rejects(api.deleteTaskList(42, 'csrf'), (error) => {
+    assert.equal(error.status, 404);
+    assert.notEqual(error.isApiError, true);
+    assert.doesNotMatch(error.message, /Internal|html/);
+    return true;
+  });
+});
+
+test('malformed JSON response shapes produce a readable error, not a TypeError', async (t) => {
+  for (const body of ['null', '[]', '{}']) {
+    t.mock.method(globalThis, 'fetch', async () => new Response(body));
+    const api = await freshApi();
+    await assert.rejects(api.getWorkspace(), (error) => {
+      assert(!(error instanceof TypeError));
+      assert.match(error.message, /Не удалось выполнить запрос/);
+      return true;
+    });
+  }
+});

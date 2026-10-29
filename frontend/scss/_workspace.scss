@@ -30,7 +30,7 @@
   }
 }
 
-.workspace-shell.is-registration-arrival { animation: workspace-registration-arrival 850ms cubic-bezier(.2,.8,.2,1) both; }
+.workspace-shell.is-registration-arrival { animation: workspace-registration-arrival 850ms cubic-bezier(.2,.8,.2,1) backwards; }
 @keyframes workspace-registration-arrival { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: scale(1); } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -727,6 +727,8 @@
   font-size: .95rem;
 }
 
+.workspace-notice { margin: 0; color: var(--workspace-muted); font-size: .85rem; }
+
 .workspace-search-results {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
@@ -806,7 +808,7 @@
   &__description { margin: 0; color: var(--workspace-muted); font-size: .86rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
   &__section-label { display: flex; width: fit-content; align-items: center; gap: 6px; margin-bottom: 3px; color: var(--workspace-muted); font-size: .66rem; font-weight: 750; letter-spacing: .1em; }
   &__section-count { color: var(--workspace-muted); font-size: .68rem; font-weight: 500; letter-spacing: 0; }
-   &__tasks { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; li { min-height: 44px; border-bottom: 1px solid var(--workspace-border); transition: background-color 120ms ease; } li:last-child { border-bottom: 0; } &.has-no-completed { margin-bottom: 8px; li:last-child { padding-bottom: 14px; } } li.is-drop-target { border-top: 2px solid var(--card-accent); background: var(--workspace-hover); } li.is-dragging { opacity: .45; } }
+    &__tasks { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; padding: 0; list-style: none; li { min-width: 0; min-height: 44px; border-bottom: 1px solid var(--workspace-border); transition: background-color 120ms ease; } li:last-child { border-bottom: 0; } &.has-no-completed { margin-bottom: 8px; li:last-child { padding-bottom: 14px; } } li.is-drop-target { border-top: 2px solid var(--card-accent); background: var(--workspace-hover); } li.is-dragging { opacity: .45; } }
   &__task { display: flex; min-height: 44px; align-items: center; gap: 12px; padding: 8px 2px; color: var(--workspace-text); font-size: .89rem; line-height: 1.45; }
   &__task-control { position: relative; display: grid; width: 25px; height: 25px; flex: none; place-items: center; cursor: pointer; }
   &__task-control input { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
@@ -814,7 +816,7 @@
   &__task-control:hover .task-list-card__task-mark { border-color: var(--workspace-text); }
   &__task-control input:checked + .task-list-card__task-mark { border-color: var(--workspace-muted); background: var(--workspace-muted); color: var(--workspace-surface); }
   &__task-control input:focus-visible + .task-list-card__task-mark { outline: 1px solid var(--workspace-text); outline-offset: 2px; }
-  &__task-title { position: relative; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  &__task-title { display: block; position: relative; min-width: 0; flex: 1 1 0; white-space: normal; overflow-wrap: anywhere; }
   &__task.is-completed,
   &__task.is-completed .task-list-card__task-title { color: var(--workspace-muted); }
   &__task.is-completing .task-list-card__task-title { text-decoration-line: line-through; text-decoration-color: currentColor; text-decoration-thickness: 1px; animation: task-title-strike 320ms ease-out both; }
@@ -889,9 +891,9 @@
   &__peek > .task-list-card { min-height: 240px; max-height: 60dvh; overflow: hidden; padding-bottom: 22px; box-shadow: 0 18px 50px rgb(0 0 0 / 20%); }
   &__dialog { position: relative; z-index: 2; width: min(736px, calc(100vw - 220px)); margin: max(7dvh, 56px) auto 0; }
   &.is-short-list &__dialog { margin: 0; }
-  &__dialog.is-opening { animation: list-focus-card-in 340ms cubic-bezier(.2,.8,.2,1) both; }
-  &__dialog.is-entering-next { animation: list-focus-slide-in-next 340ms cubic-bezier(.22,1,.36,1) both; }
-  &__dialog.is-entering-previous { animation: list-focus-slide-in-previous 340ms cubic-bezier(.22,1,.36,1) both; }
+  &__dialog.is-opening { animation: list-focus-card-in 340ms cubic-bezier(.2,.8,.2,1) backwards; }
+  &__dialog.is-entering-next { animation: list-focus-slide-in-next 340ms cubic-bezier(.22,1,.36,1) backwards; }
+  &__dialog.is-entering-previous { animation: list-focus-slide-in-previous 340ms cubic-bezier(.22,1,.36,1) backwards; }
   &__dialog.is-leaving-next { pointer-events: none; animation: list-focus-slide-out-next 340ms cubic-bezier(.22,1,.36,1) both; }
   &__dialog.is-leaving-previous { pointer-events: none; animation: list-focus-slide-out-previous 340ms cubic-bezier(.22,1,.36,1) both; }
   &__dialog > .task-list-card { max-height: none; overflow: visible; padding-bottom: 4px; box-shadow: 0 24px 80px rgb(0 0 0 / 30%); transform: none; }
@@ -926,7 +928,7 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .task-list-card__drag-handle { visibility: visible; opacity: 1; }
 }
 
-.list-delete-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(10 16 26 / 48%); }
+.workspace-shell.list-delete-backdrop { position: fixed; z-index: 1500; inset: 0; display: grid; min-height: 0; place-items: center; overflow-y: auto; padding: 20px; background: rgb(10 16 26 / 48%); }
 .list-delete-dialog { width: min(100%, 420px); padding: 24px; border: 1px solid var(--workspace-border); border-radius: 12px; background: var(--workspace-surface); color: var(--workspace-text); box-shadow: 0 12px 32px rgb(0 0 0 / 18%); h2 { margin: 0 0 10px; font-size: 1.12rem; } p { margin: 0; color: var(--workspace-muted); font-size: .92rem; line-height: 1.5; } &__actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 24px; button { min-height: 38px; padding: 0 14px; border: 1px solid var(--workspace-border); border-radius: 7px; background: var(--workspace-surface); color: var(--workspace-text); font: inherit; font-size: .84rem; font-weight: 600; cursor: pointer; &:hover { background: var(--workspace-hover); } &:disabled { opacity: .6; cursor: wait; } } button:last-child { border-color: #a33b3b; background: #a33b3b; color: #fff; &:hover { background: #8e3030; } } } &__error { margin-top: 12px !important; color: #b54747 !important; font-size: .82rem !important; } }
 
 .board-delete-backdrop { position: fixed; z-index: 1200; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(10 16 26 / 58%); }

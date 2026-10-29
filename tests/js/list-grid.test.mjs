@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const source = await readFile(new URL('../../frontend/js/workspace/listGrid.js', import.meta.url), 'utf8');
-const { adjacentLists, findGridTarget, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { adjacentLists, cardBounds, findGridTarget, moveListToSlot, masonrySlots } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const lists = [
   { id: 1, board_id: 10, is_pinned: true },
@@ -18,6 +18,17 @@ const cells = [
   { ...lists[2], left: 0, top: 270, right: 300, bottom: 520 },
   { ...lists[3], left: 320, top: 270, right: 620, bottom: 520 },
 ];
+
+test('card measurements keep actual dimensions while an animation scales the painted rectangle', () => {
+  for (const scale of [.01, .5, 1, 5, 100]) {
+    const card = { offsetWidth: 330, offsetHeight: 514,
+      getBoundingClientRect: () => ({ left: 20, top: 40, width: 330 * scale, height: 514 * scale }) };
+    assert.deepEqual(cardBounds(card, 10, 100), { left: 30, top: 140, width: 330, height: 514 });
+    const positions = masonrySlots([cardBounds(card).height, 200], 1, 1, 1, 24);
+    assert.equal(positions[1].row, 270);
+  }
+  assert.equal(cardBounds(null), null);
+});
 
 test('focused list has only its actual neighbors, wrapping at the ends', () => {
   const items = Array.from({ length: 7 }, (_, index) => ({ id: index + 1 }));
