@@ -20,6 +20,7 @@ export function ListGrid({ lists, onSwap, children }) {
   const [announcement, setAnnouncement] = useState('');
   const [error, setError] = useState('');
   const closeButton = useRef(null);
+  const mobileCloseButton = useRef(null);
   const overlayRef = useRef(null);
   const dialogRef = useRef(null);
   const [shortFocusedList, setShortFocusedList] = useState(false);
@@ -34,6 +35,7 @@ export function ListGrid({ lists, onSwap, children }) {
   const orderKey = lists.map((list) => list.id).join(',');
   const focusedIndex = lists.findIndex((list) => list.id === focusedId);
   const focusedList = lists[focusedIndex];
+  const isFocusOpen = focusedId !== null;
   const { previous: previousList, next: nextList } = adjacentLists(lists, focusedId);
   const leavingList = slide && !slide.settled && lists.find((list) => list.id === slide.fromId);
 
@@ -147,12 +149,42 @@ export function ListGrid({ lists, onSwap, children }) {
     };
   }, [focusedId]);
 
+  useLayoutEffect(() => {
+    if (!isFocusOpen || !window.matchMedia('(max-width: 700px)').matches) return undefined;
+    const body = document.body;
+    const previous = {
+      overflow: body.style.overflow,
+      position: body.style.position,
+      top: body.style.top,
+      left: body.style.left,
+      right: body.style.right,
+      width: body.style.width,
+    };
+    const scrollTop = focusScrollTop.current;
+    // Fix the document itself; overflow:hidden alone does not reliably lock iOS Safari.
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollTop}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+    return () => {
+      body.style.overflow = previous.overflow;
+      body.style.position = previous.position;
+      body.style.top = previous.top;
+      body.style.left = previous.left;
+      body.style.right = previous.right;
+      body.style.width = previous.width;
+      window.scrollTo(0, scrollTop);
+    };
+  }, [isFocusOpen]);
+
   useEffect(() => {
-    if (!shortFocusedList) return undefined;
+    if (!isFocusOpen || !shortFocusedList || window.matchMedia('(max-width: 700px)').matches) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previousOverflow; };
-  }, [shortFocusedList]);
+  }, [isFocusOpen, shortFocusedList]);
 
   useEffect(() => () => window.clearTimeout(slideTimer.current), []);
 
@@ -161,7 +193,8 @@ export function ListGrid({ lists, onSwap, children }) {
     const shell = gridRef.current?.closest('.workspace-shell');
     const previouslyInert = shell?.inert;
     if (shell) shell.inert = true;
-    (closeButton.current || dialogRef.current)?.focus({ preventScroll: true });
+    const initialFocus = window.matchMedia('(max-width: 700px)').matches ? mobileCloseButton.current : closeButton.current;
+    (initialFocus || dialogRef.current)?.focus({ preventScroll: true });
 
     function handleKeyDown(event) {
       if (event.defaultPrevented || event.target.closest?.('.list-delete-dialog')) return;
@@ -388,16 +421,25 @@ export function ListGrid({ lists, onSwap, children }) {
     window.clearTimeout(slideTimer.current);
     setSlide({ fromId: focusedIdRef.current, direction });
     setFocusedId(nextId);
-    window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
-    slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), 340);
+    if (!window.matchMedia('(max-width: 700px)').matches) {
+      window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
+    }
+    const duration = window.matchMedia('(max-width: 700px)').matches ? 220 : 340;
+    slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), duration);
   }
 
   function startSwipe(event) {
     touchStart.current = null;
-    if (event.touches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches
-        || event.target.closest('button, input, textarea, select, summary, a, [draggable="true"], [role="alertdialog"]')) return;
+    if (event.touches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
+    const preview = event.target.closest?.('.list-focus-overlay__peek');
+    if (!preview && event.target.closest?.('button, input, textarea, select, summary, a, [draggable="true"], [role="alertdialog"]')) return;
     const touch = event.touches[0];
-    touchStart.current = { x: touch.clientX, y: touch.clientY, scrollY: window.scrollY };
+    touchStart.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      scrollTop: dialogRef.current?.scrollTop || 0,
+      fromPreview: Boolean(preview),
+    };
   }
 
   function endSwipe(event) {
@@ -405,7 +447,8 @@ export function ListGrid({ lists, onSwap, children }) {
     touchStart.current = null;
     if (!start || event.changedTouches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
     const touch = event.changedTouches[0];
-    const direction = verticalSwipe(start, { x: touch.clientX, y: touch.clientY }, window.scrollY - start.scrollY);
+    const scrollDistance = start.fromPreview ? 0 : (dialogRef.current?.scrollTop || 0) - start.scrollTop;
+    const direction = verticalSwipe(start, { x: touch.clientX, y: touch.clientY }, scrollDistance, start.fromPreview ? 64 : 96);
     if (direction) focusAdjacentList(direction);
   }
 
@@ -433,15 +476,16 @@ export function ListGrid({ lists, onSwap, children }) {
         })}
       </div>)}
     </div>
-    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList ? undefined : { top: `${focusScrollTop.current}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
+    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList || window.matchMedia('(max-width: 700px)').matches ? undefined : { top: `${focusScrollTop.current}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`} onTouchStart={startSwipe} onTouchEnd={endSwipe} onTouchCancel={() => { touchStart.current = null; }}>
       <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр списка" onClick={() => setFocusedId(null)} />
-      {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true" inert>{children(previousList)}</div>}
-      {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true" inert>{children(nextList)}</div>}
+      {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(previousList)}</div></div>}
+      {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(nextList)}</div></div>}
       {leavingList && leavingList.id !== focusedId && <div className={`list-focus-overlay__dialog is-leaving-${slide.direction > 0 ? 'next' : 'previous'}`} aria-hidden="true" inert>{children(leavingList)}</div>}
-      <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1} onTouchStart={startSwipe} onTouchEnd={endSwipe} onTouchCancel={() => { touchStart.current = null; }}>
+      <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1}>
         {children(focusedList)}
         <button ref={closeButton} className="list-focus-overlay__close" type="button" aria-label="Закрыть список" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
+      <button ref={mobileCloseButton} className="list-focus-overlay__close-mobile" type="button" aria-label="Закрыть список" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       {lists.length > 1 && <nav className="list-focus-overlay__navigation" aria-label="Переключение между списками">
         <button type="button" aria-label={`Предыдущий список: ${previousList.name}`} title="Предыдущий список (⌘/Ctrl + ←)" onClick={() => focusAdjacentList(-1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
         <button type="button" aria-label={`Следующий список: ${nextList.name}`} title="Следующий список (⌘/Ctrl + →)" onClick={() => focusAdjacentList(1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>

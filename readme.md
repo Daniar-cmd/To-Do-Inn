@@ -24,12 +24,16 @@ Production-сборка frontend создаётся локально в `dist/`.
 1. Установите PHP 8.5 с `pdo_pgsql`, `mbstring`, `fileinfo`, Composer 2, PostgreSQL и Node.js 20.19+.
 2. Установите PHP-зависимости: `composer install` (или `php composer.phar install`).
 3. Настройте **`.env.laravel`**, отдельную локальную БД `todo_inn_laravel_dev` и схему по разделу ниже. В текущей рабочей копии они уже подготовлены. Не перезаписывайте `.env`, `.env.laravel` и существующие базы. `database/schema.sql` — исторический data-changing скрипт, он не используется для запуска Laravel.
-4. Установите frontend-зависимости и соберите приложение:
+4. Перед установкой frontend-зависимостей проверьте `node -v`: требуется Node.js 20.19+. На этом Mac старый `/usr/local/bin/node` (20.17) идёт первым в `PATH`; уже установленный `/opt/homebrew/bin/node` подходит. В текущем терминале выберите его **до** `npm ci`:
 
    ```sh
+   export PATH="/opt/homebrew/bin:$PATH"
+   node -v
    npm ci
    npm run build
    ```
+
+   Если `node -v` уже показывает 20.19+ в другом окружении, изменять `PATH` не нужно. Предупреждения `EBADENGINE` означают, что команда запущена со старым Node; не меняйте lock-файл ради их устранения.
 
 5. Запустите Laravel API и Vite в двух терминалах:
 
@@ -45,7 +49,7 @@ Production-сборка frontend создаётся локально в `dist/`.
 
    **Не используйте `php -S 127.0.0.1:8000 -t public` для основного приложения:** эта старая команда напрямую запускает legacy PHP и другую сессию. Не запускайте Laravel без `--env=laravel`, пока исходный `.env` сохранён для legacy.
 
-   В этой рабочей копии `/usr/local/bin/node` — старый Node 20.17, а `/opt/homebrew/bin/node` — уже установленный Node 26. Для совместимой среды можно использовать `PATH="/opt/homebrew/bin:$PATH" npm run dev` (также для `build`, `test:frontend`, `dev:styles`), без переустановки Node.
+    Для новых терминалов повторите `export PATH="/opt/homebrew/bin:$PATH"` перед `npm run dev`, `npm run dev:styles` или тестами; настройки системного окружения эта инструкция не меняет.
 
 Для разработки SCSS используйте `npm run dev:styles` в третьем терминале. Gulp пишет скомпилированный CSS в `frontend/css/style.css`; `npm run build` затем собирает HTML/React/CSS в `dist/`. Каталог `public/` — PHP web-root с сохранёнными legacy API и статикой, сборка его не перезаписывает. Размещение содержимого `dist/` рядом с `public/index.php` требует отдельного ручного шага при production-выпуске. Границы каталогов описаны в [architecture.md](architecture.md).
 

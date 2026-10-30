@@ -56,6 +56,9 @@ test('mobile vertical swipes advance and return without hijacking scroll or hori
   const start = { x: 170, y: 320 };
   assert.equal(verticalSwipe(start, { x: 190, y: 210 }), 1);
   assert.equal(verticalSwipe(start, { x: 155, y: 430 }), -1);
+  assert.equal(verticalSwipe(start, { x: 170, y: 245 }), 0);
+  assert.equal(verticalSwipe(start, { x: 170, y: 245 }, 0, 64), 1);
+  assert.equal(verticalSwipe(start, { x: 170, y: 210 }, 12), 1);
   assert.equal(verticalSwipe(start, { x: 60, y: 295 }), 0);
   assert.equal(verticalSwipe(start, { x: 170, y: 275 }), 0);
   assert.equal(verticalSwipe(start, { x: 190, y: 210 }, 60), 0);

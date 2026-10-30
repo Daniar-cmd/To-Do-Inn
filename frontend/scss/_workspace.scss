@@ -903,17 +903,8 @@
   &__dialog > .task-list-card:hover { transform: none; }
   &__navigation { position: fixed; z-index: 3; inset: 50% 12px auto; display: flex; justify-content: space-between; pointer-events: none; transform: translateY(-50%); button { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; border: 1px solid rgb(255 255 255 / 35%); border-radius: 50%; background: rgb(20 28 40 / 84%); color: #fff; cursor: pointer; pointer-events: auto; transition: background-color 150ms ease, transform 150ms ease; svg { width: 22px; height: 22px; } &:hover, &:focus-visible { background: rgb(20 28 40 / 98%); transform: scale(1.07); } } }
   &__close { position: relative; z-index: 2; display: grid; width: 46px; height: 46px; place-items: center; margin: 16px auto 42px; padding: 0; border: 1px solid rgb(255 255 255 / 28%); border-radius: 50%; background: rgb(20 28 40 / 72%); color: #fff; cursor: pointer; transition: background-color 150ms ease, transform 150ms ease; svg { display: block; width: 22px; height: 22px; } &:hover, &:focus-visible { background: rgb(20 28 40 / 92%); transform: scale(1.05); } }
+  &__close-mobile { display: none; }
   &__dialog.has-short-list > &__close { top: auto; right: auto; bottom: -58px; left: 50%; transform: translateX(-50%); &:hover, &:focus-visible { transform: translateX(-50%) scale(1.05); } }
-}
-
-@media (max-width: 600px) {
-  .list-focus-overlay {
-    &__dialog { width: calc(100vw - 28px); margin-top: 6dvh; }
-    &__dialog > .task-list-card { max-height: none; padding-inline: 17px; }
-    &__dialog > .task-list-card .task-list-card__completed { margin-inline: -17px; padding-inline: 17px; }
-    &__close { width: 46px; height: 46px; }
-    &__navigation { inset-inline: 6px; }
-  }
 }
 
 @media (max-width: 900px) {
@@ -1453,6 +1444,101 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
 }
 
 @media (max-width: 700px) {
+  .list-focus-overlay.workspace-shell,
+  .list-focus-overlay.workspace-shell.is-short-list {
+    position: fixed;
+    z-index: 1300;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100vh;
+    height: 100svh;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .list-focus-overlay__peek {
+    position: absolute;
+    z-index: 1;
+    top: max(10px, env(safe-area-inset-top));
+    right: 16px;
+    left: 16px;
+    display: block;
+    width: auto;
+    height: 88px;
+    max-height: 88px;
+    overflow: hidden;
+    border: 1px solid rgb(255 255 255 / 18%);
+    border-radius: 14px;
+    opacity: .72;
+    filter: none;
+    pointer-events: auto;
+    transform: none;
+    animation: none;
+    touch-action: none;
+  }
+
+  .list-focus-overlay__peek.is-previous { right: 16px; left: 16px; }
+  .list-focus-overlay__peek.is-next { top: auto; right: 16px; bottom: max(10px, env(safe-area-inset-bottom)); left: 16px; }
+  .list-focus-overlay__peek-card { width: 100%; pointer-events: none; }
+  .list-focus-overlay__peek-card > .task-list-card { min-height: 210px; max-height: none; overflow: hidden; padding: 12px 16px; border-radius: 13px; box-shadow: none; }
+  .list-focus-overlay__peek .task-list-card__header > .task-list-card__drag-handle,
+  .list-focus-overlay__peek .task-list-card__actions { display: none; }
+
+  .list-focus-overlay__dialog {
+    position: absolute;
+    z-index: 2;
+    top: 50%;
+    right: 14px;
+    left: 14px;
+    width: auto;
+    max-height: calc(100vh - 220px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    max-height: calc(100svh - 220px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    margin: 0;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    transform: translateY(-50%);
+  }
+
+  .list-focus-overlay__dialog::-webkit-scrollbar { display: none; }
+  .list-focus-overlay__dialog > .task-list-card { max-height: none; overflow: visible; padding-inline: 17px; }
+  .list-focus-overlay__dialog > .task-list-card .task-list-card__completed { margin-inline: -17px; padding-inline: 17px; }
+  .list-focus-overlay__dialog.is-opening { animation: list-focus-mobile-open 220ms cubic-bezier(.2,.8,.2,1) backwards; }
+  .list-focus-overlay__dialog.is-entering-next { animation: list-focus-mobile-in-next 220ms cubic-bezier(.2,.8,.2,1) backwards; }
+  .list-focus-overlay__dialog.is-entering-previous { animation: list-focus-mobile-in-previous 220ms cubic-bezier(.2,.8,.2,1) backwards; }
+  .list-focus-overlay__dialog.is-leaving-next { z-index: 1; animation: list-focus-mobile-out-next 220ms cubic-bezier(.2,.8,.2,1) both; }
+  .list-focus-overlay__dialog.is-leaving-previous { z-index: 1; animation: list-focus-mobile-out-previous 220ms cubic-bezier(.2,.8,.2,1) both; }
+
+  .list-focus-overlay__close { display: none; }
+  .list-focus-overlay__close-mobile {
+    display: grid;
+    position: fixed;
+    z-index: 4;
+    top: max(12px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgb(255 255 255 / 38%);
+    border-radius: 50%;
+    background: rgb(20 28 40 / 88%);
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgb(0 0 0 / 24%);
+  }
+  .list-focus-overlay__close-mobile svg { width: 21px; height: 21px; }
+  .list-focus-overlay__close-mobile:hover,
+  .list-focus-overlay__close-mobile:focus-visible { background: rgb(20 28 40 / 98%); }
+
+  .list-focus-overlay__navigation { display: none; }
+}
+
+@media (max-width: 700px) {
   .workspace-body { overflow-x: hidden; }
 
   .workspace-header {
@@ -1652,13 +1738,6 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     gap: 9px;
   }
 
-  .list-focus-overlay__peek,
-  .list-focus-overlay__navigation { display: none; }
-  .list-focus-overlay__dialog.is-entering-next { animation-name: list-focus-mobile-in-next; }
-  .list-focus-overlay__dialog.is-entering-previous { animation-name: list-focus-mobile-in-previous; }
-  .list-focus-overlay__dialog.is-leaving-next { animation-name: list-focus-mobile-out-next; }
-  .list-focus-overlay__dialog.is-leaving-previous { animation-name: list-focus-mobile-out-previous; }
-
   .workspace-empty {
     min-height: 130px;
   }
@@ -1670,10 +1749,11 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   }
 }
 
-@keyframes list-focus-mobile-in-next { from { opacity: .45; transform: translateY(100px) scale(.96); } to { opacity: 1; transform: none; } }
-@keyframes list-focus-mobile-in-previous { from { opacity: .45; transform: translateY(-100px) scale(.96); } to { opacity: 1; transform: none; } }
-@keyframes list-focus-mobile-out-next { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-100px) scale(.96); } }
-@keyframes list-focus-mobile-out-previous { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(100px) scale(.96); } }
+@keyframes list-focus-mobile-open { from { opacity: 0; transform: translateY(calc(-50% + 18px)); } to { opacity: 1; transform: translateY(-50%); } }
+@keyframes list-focus-mobile-in-next { from { opacity: .45; transform: translateY(calc(-50% + 80px)); } to { opacity: 1; transform: translateY(-50%); } }
+@keyframes list-focus-mobile-in-previous { from { opacity: .45; transform: translateY(calc(-50% - 80px)); } to { opacity: 1; transform: translateY(-50%); } }
+@keyframes list-focus-mobile-out-next { from { opacity: 1; transform: translateY(-50%); } to { opacity: 0; transform: translateY(calc(-50% - 80px)); } }
+@keyframes list-focus-mobile-out-previous { from { opacity: 1; transform: translateY(-50%); } to { opacity: 0; transform: translateY(calc(-50% + 80px)); } }
 
 @media (max-width: 600px) {
   .list-creator__toolbar { position: relative; }

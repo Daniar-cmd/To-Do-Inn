@@ -177,5 +177,10 @@ test('mobile styles keep the header and list options compact and use vertical fu
   assert.match(css, /\.list-creator__date \.list-date-picker__panel\s*\{[^}]*left: 12px;\s*width: auto/);
   assert.match(css, /\.list-theme-picker\s*\{\s*gap: 9px/);
   assert.match(css, /\.list-focus-overlay__navigation\s*\{\s*display: none/);
-  assert.match(css, /\.list-focus-overlay__dialog\.is-entering-next\s*\{\s*animation-name: list-focus-mobile-in-next/);
+  assert.match(css, /\.list-focus-overlay\.workspace-shell,\s*\.list-focus-overlay\.workspace-shell\.is-short-list\s*\{\s*position: fixed;[\s\S]*?height: 100svh;/);
+  assert.match(css, /\.list-focus-overlay__peek\s*\{[^}]*display: block;[^}]*pointer-events: auto/);
+  assert.match(css, /\.list-focus-overlay__peek\.is-next\s*\{[^}]*bottom: max\(/);
+  assert.match(css, /\.list-focus-overlay__dialog\s*\{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);
+  assert.match(css, /\.list-focus-overlay__dialog\.is-entering-next\s*\{\s*animation: list-focus-mobile-in-next/);
+  assert.match(css, /\.list-focus-overlay__close-mobile\s*\{\s*display: grid;\s*position: fixed/);
 });

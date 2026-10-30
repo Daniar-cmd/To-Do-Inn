@@ -19,11 +19,11 @@ export function adjacentLists(lists, focusedId) {
 }
 
 // Upwards advances, downwards goes back; horizontal gestures and scrolling stay native.
-export function verticalSwipe(start, end, scrollDistance = 0) {
+export function verticalSwipe(start, end, scrollDistance = 0, threshold = 96) {
   if (!start || !end || Math.abs(scrollDistance) > 12) return 0;
   const dx = end.x - start.x;
   const dy = end.y - start.y;
-  if (Math.abs(dy) < 70 || Math.abs(dy) < Math.abs(dx) * 1.5) return 0;
+  if (Math.abs(dy) < threshold || Math.abs(dy) < Math.abs(dx) * 1.4) return 0;
   return dy < 0 ? 1 : -1;
 }
 
