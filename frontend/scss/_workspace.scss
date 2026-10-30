@@ -891,6 +891,7 @@
   &__peek { position: fixed; z-index: 1; top: 50%; width: min(360px, 40vw); max-height: 60dvh; overflow: hidden; opacity: .65; filter: blur(2px) saturate(.75); pointer-events: none; transform: translateY(-50%) scale(.94); animation: list-focus-peek-in 260ms ease both; }
   &__peek.is-previous { left: -220px; }
   &__peek.is-next { right: -220px; }
+  &__peek.is-following-next, &__peek.is-following-previous { display: none; }
   &__peek > .task-list-card { min-height: 240px; max-height: 60dvh; overflow: hidden; padding-bottom: 22px; box-shadow: 0 18px 50px rgb(0 0 0 / 20%); }
   &__dialog { position: relative; z-index: 2; width: min(736px, calc(100vw - 220px)); margin: max(7dvh, 56px) auto 0; }
   &.is-short-list &__dialog { margin: 0; }
@@ -1462,8 +1463,8 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     position: absolute;
     z-index: 1;
     top: max(10px, env(safe-area-inset-top));
-    right: 16px;
-    left: 16px;
+    right: 28px;
+    left: 28px;
     display: block;
     width: auto;
     height: 88px;
@@ -1471,7 +1472,7 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     overflow: hidden;
     border: 1px solid rgb(255 255 255 / 18%);
     border-radius: 14px;
-    opacity: .72;
+    opacity: .78;
     filter: none;
     pointer-events: auto;
     transform: none;
@@ -1479,10 +1480,12 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     touch-action: none;
   }
 
-  .list-focus-overlay__peek.is-previous { right: 16px; left: 16px; }
-  .list-focus-overlay__peek.is-next { top: auto; right: 16px; bottom: max(10px, env(safe-area-inset-bottom)); left: 16px; }
-  .list-focus-overlay__peek-card { width: 100%; pointer-events: none; }
-  .list-focus-overlay__peek-card > .task-list-card { min-height: 210px; max-height: none; overflow: hidden; padding: 12px 16px; border-radius: 13px; box-shadow: none; }
+  .list-focus-overlay__peek.is-previous { right: 28px; left: 28px; }
+  .list-focus-overlay__peek.is-next { top: auto; right: 28px; bottom: max(10px, env(safe-area-inset-bottom)); left: 28px; }
+  .list-focus-overlay__peek.is-following-next { top: auto; right: 28px; bottom: max(10px, env(safe-area-inset-bottom)); left: 28px; pointer-events: none; }
+  .list-focus-overlay__peek.is-following-previous { right: 28px; left: 28px; pointer-events: none; }
+  .list-focus-overlay__peek-card { width: 100%; height: 100%; pointer-events: none; }
+  .list-focus-overlay__peek-card > .task-list-card { min-height: 100%; max-height: none; overflow: hidden; padding: 12px 16px; border-radius: 13px; box-shadow: none; }
   .list-focus-overlay__peek .task-list-card__header > .task-list-card__drag-handle,
   .list-focus-overlay__peek .task-list-card__actions { display: none; }
 
@@ -1493,6 +1496,8 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     right: 14px;
     left: 14px;
     width: auto;
+    height: calc(100vh - 220px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    height: calc(100svh - 220px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     max-height: calc(100vh - 220px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     max-height: calc(100svh - 220px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     overflow-x: hidden;
@@ -1505,13 +1510,50 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   }
 
   .list-focus-overlay__dialog::-webkit-scrollbar { display: none; }
-  .list-focus-overlay__dialog > .task-list-card { max-height: none; overflow: visible; padding-inline: 17px; }
+  .list-focus-overlay__dialog > .task-list-card { min-height: 100%; max-height: none; overflow: visible; padding-inline: 17px; }
   .list-focus-overlay__dialog > .task-list-card .task-list-card__completed { margin-inline: -17px; padding-inline: 17px; }
   .list-focus-overlay__dialog.is-opening { animation: list-focus-mobile-open 220ms cubic-bezier(.2,.8,.2,1) backwards; }
   .list-focus-overlay__dialog.is-entering-next { animation: list-focus-mobile-in-next 220ms cubic-bezier(.2,.8,.2,1) backwards; }
   .list-focus-overlay__dialog.is-entering-previous { animation: list-focus-mobile-in-previous 220ms cubic-bezier(.2,.8,.2,1) backwards; }
   .list-focus-overlay__dialog.is-leaving-next { z-index: 1; animation: list-focus-mobile-out-next 220ms cubic-bezier(.2,.8,.2,1) both; }
   .list-focus-overlay__dialog.is-leaving-previous { z-index: 1; animation: list-focus-mobile-out-previous 220ms cubic-bezier(.2,.8,.2,1) both; }
+
+  .list-focus-overlay[data-swipe] .list-focus-overlay__dialog {
+    animation: none;
+    // Resizing the scrolling box (including its width) reflows long tasks and shifts scrollTop.
+    clip-path: inset(0 calc(14px * var(--focus-progress)) calc(var(--focus-enter-height) * var(--focus-progress)) calc(14px * var(--focus-progress)) round 14px);
+    transform: translateY(calc(-50% + (var(--focus-outgoing-y) + var(--focus-enter-height) / 2) * var(--focus-progress)));
+  }
+  .list-focus-overlay[data-swipe] .list-focus-overlay__peek { animation: none; }
+  .list-focus-overlay[data-swipe='next'] .list-focus-overlay__peek.is-previous,
+  .list-focus-overlay[data-swipe='previous'] .list-focus-overlay__peek.is-next { opacity: calc(.78 * (1 - var(--focus-progress))); }
+  .list-focus-overlay[data-swipe='next'] .list-focus-overlay__peek.is-following-next,
+  .list-focus-overlay[data-swipe='previous'] .list-focus-overlay__peek.is-following-previous { display: block; opacity: calc(.78 * var(--focus-progress)); }
+  .list-focus-overlay[data-swipe] .list-focus-overlay__dialog .task-list-card__actions { opacity: calc(1 - var(--focus-progress)); }
+  .list-focus-overlay[data-swipe='next'] .list-focus-overlay__peek.is-next,
+  .list-focus-overlay[data-swipe='previous'] .list-focus-overlay__peek.is-previous {
+    z-index: 3;
+    right: calc(28px - 14px * var(--focus-progress));
+    left: calc(28px - 14px * var(--focus-progress));
+    height: calc(88px + var(--focus-enter-height) * var(--focus-progress));
+    max-height: none;
+    opacity: calc(.78 + .22 * var(--focus-progress));
+    filter: none;
+    transform: translateY(calc(var(--focus-enter-y) * var(--focus-progress)));
+  }
+  .list-focus-overlay[data-swipe] .list-focus-overlay__peek.is-next .task-list-card,
+  .list-focus-overlay[data-swipe] .list-focus-overlay__peek.is-previous .task-list-card { padding-top: calc(12px + 8px * var(--focus-progress)); padding-inline: calc(16px + 1px * var(--focus-progress)); }
+  .list-focus-overlay[data-swipe='next'] .list-focus-overlay__peek.is-next .task-list-card__actions,
+  .list-focus-overlay[data-swipe='previous'] .list-focus-overlay__peek.is-previous .task-list-card__actions { display: flex; opacity: var(--focus-progress); }
+  .list-focus-overlay[data-swipe='next'] .list-focus-overlay__peek.is-next { top: calc(100% - 98px - env(safe-area-inset-bottom)); bottom: auto; }
+  .list-focus-overlay[data-swipe-settling] .list-focus-overlay__dialog,
+  .list-focus-overlay[data-swipe-settling] .list-focus-overlay__peek { transition: transform 260ms cubic-bezier(.22,1,.36,1), height 260ms cubic-bezier(.22,1,.36,1), opacity 260ms ease, left 260ms ease, right 260ms ease, clip-path 260ms ease; }
+  .list-focus-overlay[data-swipe-commit] .list-focus-overlay__dialog,
+  .list-focus-overlay[data-swipe-commit] .list-focus-overlay__peek { transition-duration: 440ms; transition-timing-function: cubic-bezier(.25,.8,.25,1); }
+  .list-focus-overlay[data-swipe-commit] .task-list-card__actions { transition: opacity 180ms ease; }
+  .list-focus-overlay[data-swipe-commit] .list-focus-overlay__peek-card > .task-list-card { transition: padding 440ms cubic-bezier(.25,.8,.25,1); }
+  .list-focus-overlay[data-swipe-commit] .list-focus-overlay__dialog { opacity: .78; }
+  .list-focus-overlay[data-swipe-settling] .list-focus-overlay__peek-card > .task-list-card { box-shadow: 0 20px 55px rgb(0 0 0 / 22%); }
 
   .list-focus-overlay__close { display: none; }
   .list-focus-overlay__close-mobile {
@@ -1809,6 +1851,9 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .list-focus-overlay__backdrop,
   .list-focus-overlay__dialog,
   .list-focus-overlay__peek { animation: none !important; }
+
+  .list-focus-overlay[data-swipe-settling] .list-focus-overlay__dialog,
+  .list-focus-overlay[data-swipe-settling] .list-focus-overlay__peek { transition: none; }
 
   .list-date-picker > summary { transition: none; }
   .list-date-picker__input,

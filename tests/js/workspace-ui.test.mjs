@@ -179,8 +179,17 @@ test('mobile styles keep the header and list options compact and use vertical fu
   assert.match(css, /\.list-focus-overlay__navigation\s*\{\s*display: none/);
   assert.match(css, /\.list-focus-overlay\.workspace-shell,\s*\.list-focus-overlay\.workspace-shell\.is-short-list\s*\{\s*position: fixed;[\s\S]*?height: 100svh;/);
   assert.match(css, /\.list-focus-overlay__peek\s*\{[^}]*display: block;[^}]*pointer-events: auto/);
+  assert.match(css, /\.list-focus-overlay__peek\.is-previous\s*\{\s*right: 28px;\s*left: 28px/);
+  assert.match(css, /\.list-focus-overlay\[data-swipe=next\] \.list-focus-overlay__peek\.is-following-next[\s\S]*?display: block;\s*opacity: calc\(/);
   assert.match(css, /\.list-focus-overlay__peek\.is-next\s*\{[^}]*bottom: max\(/);
   assert.match(css, /\.list-focus-overlay__dialog\s*\{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);
   assert.match(css, /\.list-focus-overlay__dialog\.is-entering-next\s*\{\s*animation: list-focus-mobile-in-next/);
+  assert.match(css, /\.list-focus-overlay\[data-swipe\] \.list-focus-overlay__dialog\s*\{[^}]*--focus-outgoing-y/);
+  const swipeDialog = css.match(/\.list-focus-overlay\[data-swipe\] \.list-focus-overlay__dialog\s*\{([^}]*)\}/)?.[1];
+  assert.match(swipeDialog, /clip-path: inset\([^;]*--focus-enter-height/);
+  assert.doesNotMatch(swipeDialog, /(?:height|width|left|right):/);
+  assert.match(css, /\.list-focus-overlay\[data-swipe=next\] \.list-focus-overlay__peek\.is-next[\s\S]*?--focus-enter-height/);
+  assert.match(css, /\.list-focus-overlay\[data-swipe-settling\] \.list-focus-overlay__dialog[\s\S]*?transition: transform 260ms/);
+  assert.match(css, /\.list-focus-overlay\[data-swipe-commit\] \.list-focus-overlay__dialog\s*\{\s*opacity: 0\.78/);
   assert.match(css, /\.list-focus-overlay__close-mobile\s*\{\s*display: grid;\s*position: fixed/);
 });

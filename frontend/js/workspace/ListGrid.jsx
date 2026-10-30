@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot, verticalSwipe } from './listGrid.js';
 
 const motionOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
+const carouselDuration = 440;
 
 export function ListGrid({ lists, onSwap, children }) {
   const gridRef = useRef(null);
@@ -25,7 +26,9 @@ export function ListGrid({ lists, onSwap, children }) {
   const dialogRef = useRef(null);
   const [shortFocusedList, setShortFocusedList] = useState(false);
   const slideTimer = useRef(null);
+  const swipeResetTimer = useRef(null);
   const touchStart = useRef(null);
+  const mobileSliding = useRef(false);
   const focusReturn = useRef(null);
   const focusScrollTop = useRef(0);
   const focusedIdRef = useRef(focusedId);
@@ -37,6 +40,8 @@ export function ListGrid({ lists, onSwap, children }) {
   const focusedList = lists[focusedIndex];
   const isFocusOpen = focusedId !== null;
   const { previous: previousList, next: nextList } = adjacentLists(lists, focusedId);
+  const followingNext = nextList && adjacentLists(lists, nextList.id).next;
+  const followingPrevious = previousList && adjacentLists(lists, previousList.id).previous;
   const leavingList = slide && !slide.settled && lists.find((list) => list.id === slide.fromId);
 
   function cardFor(id) {
@@ -186,7 +191,31 @@ export function ListGrid({ lists, onSwap, children }) {
     return () => { document.body.style.overflow = previousOverflow; };
   }, [isFocusOpen, shortFocusedList]);
 
-  useEffect(() => () => window.clearTimeout(slideTimer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(slideTimer.current);
+    window.clearTimeout(swipeResetTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (isFocusOpen) return;
+    window.clearTimeout(slideTimer.current);
+    window.clearTimeout(swipeResetTimer.current);
+    mobileSliding.current = false;
+    touchStart.current = null;
+  }, [isFocusOpen]);
+
+  useLayoutEffect(() => {
+    if (!mobileSliding.current || !overlayRef.current) return;
+    mobileSliding.current = false;
+    const overlay = overlayRef.current;
+    delete overlay.dataset.swipe;
+    delete overlay.dataset.swipeSettling;
+    delete overlay.dataset.swipeCommit;
+    overlay.style.removeProperty('--focus-progress');
+    overlay.style.removeProperty('--focus-enter-y');
+    overlay.style.removeProperty('--focus-enter-height');
+    overlay.style.removeProperty('--focus-outgoing-y');
+  }, [focusedId]);
 
   useEffect(() => {
     if (focusedId === null) return undefined;
@@ -428,9 +457,38 @@ export function ListGrid({ lists, onSwap, children }) {
     slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), duration);
   }
 
+  function showSwipe(offset, direction, settling = false) {
+    const overlay = overlayRef.current;
+    const dialog = dialogRef.current;
+    const preview = overlay?.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-next' : '.list-focus-overlay__peek.is-previous');
+    if (!overlay || !dialog || !preview) return;
+    const metrics = touchStart.current?.metrics || (() => {
+      const active = dialog.getBoundingClientRect();
+      const neighbor = preview.getBoundingClientRect();
+      const outgoing = overlay.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-previous' : '.list-focus-overlay__peek.is-next');
+      return {
+        distance: Math.max(320, active.height * .85),
+        enterY: active.top - neighbor.top,
+        enterHeight: active.height - 88,
+        outgoingY: (outgoing?.getBoundingClientRect().top || active.top) - (overlay.getBoundingClientRect().top + overlay.clientHeight / 2 - 44),
+      };
+    })();
+    if (touchStart.current && !touchStart.current.metrics) touchStart.current.metrics = metrics;
+    const { distance } = metrics;
+    const progress = Math.min(1, Math.abs(offset) / distance);
+    overlay.dataset.swipe = direction > 0 ? 'next' : 'previous';
+    overlay.style.setProperty('--focus-enter-y', `${metrics.enterY}px`);
+    overlay.style.setProperty('--focus-enter-height', `${metrics.enterHeight}px`);
+    overlay.style.setProperty('--focus-outgoing-y', `${metrics.outgoingY}px`);
+    overlay.style.setProperty('--focus-progress', String(progress));
+    if (settling) overlay.dataset.swipeSettling = 'true';
+  }
+
   function startSwipe(event) {
     touchStart.current = null;
-    if (event.touches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
+    if (mobileSliding.current || event.touches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
+    window.clearTimeout(swipeResetTimer.current);
+    if (overlayRef.current) delete overlayRef.current.dataset.swipeSettling;
     const preview = event.target.closest?.('.list-focus-overlay__peek');
     if (!preview && event.target.closest?.('button, input, textarea, select, summary, a, [draggable="true"], [role="alertdialog"]')) return;
     const touch = event.touches[0];
@@ -439,18 +497,85 @@ export function ListGrid({ lists, onSwap, children }) {
       y: touch.clientY,
       scrollTop: dialogRef.current?.scrollTop || 0,
       fromPreview: Boolean(preview),
+      previewDirection: preview?.classList.contains('is-next') ? 1 : -1,
+      scrolled: false,
+      direction: 0,
     };
+  }
+
+  function moveSwipe(event) {
+    const start = touchStart.current;
+    if (!start || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const dy = touch.clientY - start.y;
+    const dx = touch.clientX - start.x;
+    if (Math.abs((dialogRef.current?.scrollTop || 0) - start.scrollTop) > 8) start.scrolled = true;
+    if (start.scrolled || Math.abs(dy) < 8 || Math.abs(dy) < Math.abs(dx) * 1.4) return;
+    const direction = dy < 0 ? 1 : -1;
+    if (start.fromPreview && direction !== start.previewDirection) return;
+    const dialog = dialogRef.current;
+    const canScroll = !start.fromPreview && dialog && (direction > 0
+      ? dialog.scrollTop < dialog.scrollHeight - dialog.clientHeight - 2
+      : dialog.scrollTop > 2);
+    if (canScroll || listsRef.current.length < 2) return;
+    event.preventDefault();
+    if (start.direction && start.direction !== direction) start.metrics = null;
+    start.direction = direction;
+    showSwipe(dy, direction);
   }
 
   function endSwipe(event) {
     const start = touchStart.current;
-    touchStart.current = null;
-    if (!start || event.changedTouches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
+    if (!start) return;
+    if (event.changedTouches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) { touchStart.current = null; return; }
     const touch = event.changedTouches[0];
     const scrollDistance = start.fromPreview ? 0 : (dialogRef.current?.scrollTop || 0) - start.scrollTop;
     const direction = verticalSwipe(start, { x: touch.clientX, y: touch.clientY }, scrollDistance, start.fromPreview ? 64 : 96);
-    if (direction) focusAdjacentList(direction);
+    const overlay = overlayRef.current;
+    const dialog = dialogRef.current;
+    const canScroll = !start.fromPreview && dialog && (direction > 0
+      ? dialog.scrollTop < dialog.scrollHeight - dialog.clientHeight - 2
+      : dialog.scrollTop > 2);
+    if (!start.scrolled && direction && (!start.direction || direction === start.direction) && !canScroll && (!start.fromPreview || direction === start.previewDirection)) {
+      const nextId = (direction > 0 ? adjacentLists(listsRef.current, focusedIdRef.current).next : adjacentLists(listsRef.current, focusedIdRef.current).previous)?.id;
+      if (nextId === undefined) return;
+      mobileSliding.current = true;
+      const preview = overlay?.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-next' : '.list-focus-overlay__peek.is-previous');
+      const distance = start.metrics?.distance || Math.abs((dialogRef.current?.getBoundingClientRect().top || 0) - (preview?.getBoundingClientRect().top || 0));
+      overlay.dataset.swipeCommit = 'true';
+      showSwipe(-direction * distance, direction, true);
+      window.clearTimeout(slideTimer.current);
+      slideTimer.current = window.setTimeout(() => {
+        setSlide({ fromId: focusedIdRef.current, direction, settled: true });
+        setFocusedId(nextId);
+      }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : carouselDuration);
+    } else if (overlay) {
+      overlay.dataset.swipeSettling = 'true';
+      overlay.style.setProperty('--focus-progress', '0');
+      swipeResetTimer.current = window.setTimeout(() => { if (overlay.isConnected && !mobileSliding.current) { delete overlay.dataset.swipe; delete overlay.dataset.swipeSettling; } }, 280);
+    }
+    touchStart.current = null;
   }
+
+  useEffect(() => {
+    if (focusedId === null || !window.matchMedia('(max-width: 700px)').matches) return undefined;
+    const overlay = overlayRef.current;
+    if (!overlay) return undefined;
+    const start = (event) => startSwipe(event);
+    const move = (event) => moveSwipe(event);
+    const end = (event) => endSwipe(event);
+    const cancel = () => { touchStart.current = null; delete overlay.dataset.swipe; delete overlay.dataset.swipeSettling; delete overlay.dataset.swipeCommit; overlay.style.removeProperty('--focus-progress'); };
+    overlay.addEventListener('touchstart', start, { passive: true });
+    overlay.addEventListener('touchmove', move, { passive: false });
+    overlay.addEventListener('touchend', end);
+    overlay.addEventListener('touchcancel', cancel);
+    return () => {
+      overlay.removeEventListener('touchstart', start);
+      overlay.removeEventListener('touchmove', move);
+      overlay.removeEventListener('touchend', end);
+      overlay.removeEventListener('touchcancel', cancel);
+    };
+  }, [focusedId]);
 
   function openList(id, target) {
     if (savingRef.current || gesture.current?.active) return;
@@ -476,10 +601,12 @@ export function ListGrid({ lists, onSwap, children }) {
         })}
       </div>)}
     </div>
-    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList || window.matchMedia('(max-width: 700px)').matches ? undefined : { top: `${focusScrollTop.current}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`} onTouchStart={startSwipe} onTouchEnd={endSwipe} onTouchCancel={() => { touchStart.current = null; }}>
+    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList || window.matchMedia('(max-width: 700px)').matches ? undefined : { top: `${focusScrollTop.current}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
       <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр списка" onClick={() => setFocusedId(null)} />
       {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(previousList)}</div></div>}
       {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(nextList)}</div></div>}
+      {followingNext && <div className="list-focus-overlay__peek is-following-next" aria-hidden="true"><div className="list-focus-overlay__peek-card"><article className="task-list-card" data-theme={followingNext.theme}><header className="task-list-card__header" /><div className="task-list-card__intro"><h2>{followingNext.name}</h2></div></article></div></div>}
+      {followingPrevious && <div className="list-focus-overlay__peek is-following-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card"><article className="task-list-card" data-theme={followingPrevious.theme}><header className="task-list-card__header" /><div className="task-list-card__intro"><h2>{followingPrevious.name}</h2></div></article></div></div>}
       {leavingList && leavingList.id !== focusedId && <div className={`list-focus-overlay__dialog is-leaving-${slide.direction > 0 ? 'next' : 'previous'}`} aria-hidden="true" inert>{children(leavingList)}</div>}
       <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1}>
         {children(focusedList)}
