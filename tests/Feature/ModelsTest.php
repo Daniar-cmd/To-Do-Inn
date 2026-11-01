@@ -57,7 +57,7 @@ class ModelsTest extends DatabaseTestCase
         $list->save();
 
         foreach ([2, 0, 1] as $position) {
-            $task = $user->tasks()->make(['title' => 'Task '.$position, 'sort_order' => $position]);
+            $task = $user->tasks()->make(['title' => 'Task '.$position, 'sort_order' => $position, 'board_id' => $board->id]);
             $task->taskList()->associate($list);
             $task->save();
         }

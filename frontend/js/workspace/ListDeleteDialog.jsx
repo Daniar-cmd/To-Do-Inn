@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 // Keep fixed dialogs outside cards: card transforms otherwise change their containing block.
-export function ListDeleteDialog({ id, title, children, error, busy, confirmLabel, onClose, onConfirm, theme }) {
+export function ListDeleteDialog({ id, title, children, error, busy, busyLabel = 'Удаляем…', confirmLabel, onClose, onConfirm, theme }) {
   const dialogRef = useRef(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -39,7 +39,7 @@ export function ListDeleteDialog({ id, title, children, error, busy, confirmLabe
       {error && <p className="list-delete-dialog__error" role="alert">{error}</p>}
       <div className="list-delete-dialog__actions">
         <button type="button" onClick={onClose} disabled={busy}>Отмена</button>
-        <button type="button" onClick={onConfirm} disabled={busy}>{busy ? 'Удаляем…' : confirmLabel}</button>
+        <button type="button" onClick={onConfirm} disabled={busy}>{busy ? busyLabel : confirmLabel}</button>
       </div>
     </section>
   </div>, document.body);

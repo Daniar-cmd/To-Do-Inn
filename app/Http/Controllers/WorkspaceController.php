@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 
 class WorkspaceController
 {
@@ -45,7 +46,7 @@ class WorkspaceController
                     'reorder_list' => $this->reorderList($input, $userId),
                     'create_flag' => $this->createFlag($input, $userId),
                     'invite_member' => $this->inviteMember($input, $userId),
-                    'create_task', 'update_task', 'toggle_task', 'reorder_task', 'delete_task' => $this->saveTask($input, $userId),
+                    'create_task', 'update_task', 'toggle_task', 'reorder_task', 'delete_task', 'stop_task_repeat' => $this->saveTask($input, $userId),
                     default => $this->fail(400, 'Unknown action'),
                 };
             });
@@ -95,8 +96,14 @@ class WorkspaceController
                 ->orderByRaw('CASE WHEN boards.lists_order_customized THEN lists.sort_order END ASC')
                 ->orderByRaw('CASE WHEN NOT boards.lists_order_customized THEN lists.created_at END DESC')
                 ->orderByDesc('lists.id')->get();
-            $tasks = DB::table('tasks')->whereIn('list_id', $found->pluck('id'))
-                ->orderBy('sort_order')->orderBy('id')->get(['id', 'list_id', 'title', 'is_completed'])->groupBy('list_id');
+            $tasks = DB::table('tasks')->leftJoin('user_flags as task_flags', function ($join): void {
+                $join->on('task_flags.id', '=', 'tasks.flag_id')->on('task_flags.user_id', '=', 'tasks.user_id')
+                    ->on('task_flags.board_id', '=', 'tasks.board_id');
+            })->whereIn('list_id', $found->pluck('id'))
+                ->orderBy('sort_order')->orderBy('id')->get([
+                    'tasks.id', 'tasks.list_id', 'tasks.title', 'tasks.is_completed', 'tasks.description',
+                    'tasks.is_important', 'tasks.urgency', 'tasks.due_date', 'tasks.deadline', 'tasks.location', 'tasks.scheduled_time', 'tasks.repeat_interval', 'tasks.flag_id', 'task_flags.name as flag_name', 'task_flags.color as flag_color',
+                ])->groupBy('list_id');
             $flags = DB::table('user_flags')->whereIn('board_id', $boardIds)->orderBy('name')
                 ->get(['id', 'board_id', 'name', 'color'])->groupBy('board_id');
 
@@ -120,10 +127,17 @@ class WorkspaceController
         $boardOwnerId = (int) $board->user_id;
         $flags = DB::table('user_flags')->where('user_id', $boardOwnerId)->where('board_id', $board->id)
             ->orderBy('name')->get(['id', 'board_id', 'name', 'color']);
-        $tasks = DB::table('tasks')->join('task_lists', 'task_lists.id', '=', 'tasks.list_id')
+        $tasks = DB::table('tasks')->join('task_lists', function ($join): void {
+            $join->on('task_lists.id', '=', 'tasks.list_id')->on('task_lists.user_id', '=', 'tasks.user_id')
+                ->on('task_lists.board_id', '=', 'tasks.board_id');
+        })->leftJoin('user_flags as task_flags', function ($join): void {
+            $join->on('task_flags.id', '=', 'tasks.flag_id')->on('task_flags.user_id', '=', 'tasks.user_id')
+                ->on('task_flags.board_id', '=', 'tasks.board_id');
+        })
             ->where('tasks.user_id', $boardOwnerId)->where('task_lists.user_id', $boardOwnerId)->where('task_lists.board_id', $board->id)
             ->orderBy('tasks.list_id')->orderBy('tasks.sort_order')->orderBy('tasks.id')
-            ->get(['tasks.id', 'tasks.list_id', 'tasks.title', 'tasks.is_completed']);
+            ->get(['tasks.id', 'tasks.list_id', 'tasks.title', 'tasks.is_completed', 'tasks.description',
+                'tasks.is_important', 'tasks.urgency', 'tasks.due_date', 'tasks.deadline', 'tasks.location', 'tasks.scheduled_time', 'tasks.repeat_interval', 'tasks.flag_id', 'task_flags.name as flag_name', 'task_flags.color as flag_color']);
 
         return $this->success([
             'board' => $this->boardData($board),
@@ -485,17 +499,81 @@ class WorkspaceController
             $this->fail(422, 'Некорректная задача.');
         }
         if ($action === 'create_task') {
+            $description = $input['description'] ?? '';
+            $important = $input['is_important'] ?? false;
+            $urgency = $input['urgency'] ?? 0;
+            $flagId = $input['flag_id'] ?? null;
+            $newFlagName = $input['new_flag_name'] ?? '';
+            $dueDate = $input['due_date'] ?? null;
+            $deadline = $input['deadline'] ?? null;
+            $repeat = $input['repeat_interval'] ?? null;
+            $location = $input['location'] ?? null;
+            $scheduledTime = $input['scheduled_time'] ?? null;
+            if (!is_string($description) || mb_strlen($description) > 2000 || !is_bool($important)
+                || !is_int($urgency) || $urgency < 0 || $urgency > 4
+                || !is_string($newFlagName)
+                || ($location !== null && (!is_string($location) || mb_strlen($location) > 160 || preg_match('/[\x00-\x1F\x7F]/u', $location)))
+                 || ($scheduledTime !== null && (!is_string($scheduledTime) || !preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/D', $scheduledTime)))
+                 || ($repeat !== null && !in_array($repeat, ['daily', 'weekly', 'monthly', 'yearly'], true))) {
+                $this->fail(422, 'Проверьте параметры задачи.');
+            }
+            $location = $location === null ? null : trim($location);
+            $location = $location === '' ? null : $location;
+            if ($location === null && $scheduledTime !== null) {
+                $this->fail(422, 'Время можно указать только для задачи с локацией.');
+            }
+            $newFlagName = trim($newFlagName);
+            if (mb_strlen($newFlagName) > 40 || preg_match('/[\x00-\x1F\x7F]/u', $newFlagName)
+                || ($newFlagName !== '' && $flagId !== null)) {
+                $this->fail(422, 'Проверьте выбранный флаг.');
+            }
+            if ($dueDate !== null && (!is_string($dueDate) || !preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/D', $dueDate)
+                || $dueDate < '1000-01-01' || (\DateTimeImmutable::createFromFormat('!Y-m-d', $dueDate)?->format('Y-m-d') !== $dueDate)
+                || $dueDate < today()->toDateString())) {
+                $this->fail(422, 'Выберите корректную дату, не раньше сегодняшнего дня.');
+            }
+            if ($deadline !== null && (!is_string($deadline) || !preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/D', $deadline)
+                || $deadline < '1000-01-01' || (\DateTimeImmutable::createFromFormat('!Y-m-d', $deadline)?->format('Y-m-d') !== $deadline)
+                || $deadline < today()->toDateString())) {
+                $this->fail(422, 'Выберите корректный дедлайн, не раньше сегодняшнего дня.');
+            }
+            if (($dueDate !== null && $deadline !== null) || ($repeat !== null && $dueDate === null && $deadline === null)) {
+                $this->fail(422, 'Выберите одну дату или дедлайн для задачи с повторением.');
+            }
             $list = DB::table('task_lists')->where('id', $id)->first();
             $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId);
             if ($list === null || $board === null) {
                 $this->fail(404, 'Список не найден.');
             }
             $boardOwnerId = (int) $board->user_id;
+            if ($newFlagName !== '') {
+                $flagId = DB::table('user_flags')->insertGetId([
+                    'user_id' => $boardOwnerId, 'board_id' => $list->board_id, 'name' => $newFlagName,
+                ]);
+            } elseif ($flagId !== null) {
+                $flagId = $this->id($flagId);
+                if ($flagId === false || !DB::table('user_flags')->where('id', $flagId)->where('user_id', $boardOwnerId)
+                    ->where('board_id', $list->board_id)->exists()) {
+                    $this->fail(404, 'Флаг не найден.');
+                }
+            }
             $maximum = DB::table('tasks')->where('user_id', $boardOwnerId)->where('list_id', $id)->max('sort_order');
             $taskId = DB::table('tasks')->insertGetId(['user_id' => $boardOwnerId, 'list_id' => $id,
-                'title' => trim($title), 'sort_order' => $maximum === null ? 0 : $maximum + 1]);
+                'board_id' => $list->board_id, 'title' => trim($title), 'description' => trim($description),
+                'is_important' => $important, 'urgency' => $urgency, 'flag_id' => $flagId, 'due_date' => $dueDate, 'deadline' => $deadline,
+                 'location' => $location, 'scheduled_time' => $scheduledTime, 'repeat_interval' => $repeat,
+                 'repeat_series_id' => $repeat === null ? null : (string) Str::uuid(),
+                 'repeat_anchor_date' => $repeat === null ? null : ($dueDate ?? $deadline),
+                'sort_order' => $maximum === null ? 0 : $maximum + 1]);
+            $task = DB::table('tasks')->leftJoin('user_flags as task_flags', function ($join): void {
+                $join->on('task_flags.id', '=', 'tasks.flag_id')->on('task_flags.user_id', '=', 'tasks.user_id')
+                    ->on('task_flags.board_id', '=', 'tasks.board_id');
+            })->where('tasks.id', $taskId)->first([
+                'tasks.id', 'tasks.list_id', 'tasks.title', 'tasks.is_completed', 'tasks.description',
+                 'tasks.is_important', 'tasks.urgency', 'tasks.due_date', 'tasks.deadline', 'tasks.location', 'tasks.scheduled_time', 'tasks.repeat_interval', 'tasks.flag_id', 'task_flags.name as flag_name', 'task_flags.color as flag_color',
+            ]);
 
-            return $this->success(['task' => ['id' => $taskId, 'list_id' => $id, 'title' => trim($title), 'is_completed' => false]], 201);
+            return $this->success(['task' => $this->taskData($task)], 201);
         }
         $task = DB::table('tasks')->where('id', $id)->first();
         $list = $task === null ? null : DB::table('task_lists')->where('id', $task->list_id)->where('user_id', $task->user_id)->first();
@@ -504,11 +582,27 @@ class WorkspaceController
             $this->fail(404, 'Задача не найдена.');
         }
         $boardOwnerId = (int) $board->user_id;
+        if ($action === 'stop_task_repeat') {
+            if ($task->repeat_interval === null || $task->repeat_series_id === null) {
+                $this->fail(409, 'Повторение уже остановлено.');
+            }
+            DB::table('users')->where('id', $boardOwnerId)->lockForUpdate()->first(['id']);
+            DB::table('tasks')->where('user_id', $boardOwnerId)->where('repeat_series_id', $task->repeat_series_id)
+                ->update(['repeat_interval' => null]);
+
+            return $this->success(['updated' => true]);
+        }
         if ($action === 'delete_task') {
             if (!(bool) $task->is_completed) {
                 $this->fail(409, 'Можно удалить только выполненную задачу.');
             }
+            if ($task->repeat_interval !== null && DB::table('tasks')->where('user_id', $boardOwnerId)
+                ->where('repeat_series_id', $task->repeat_series_id)->where('repeat_sequence', '>', $task->repeat_sequence)->doesntExist()) {
+                $this->fail(409, 'Сначала остановите повторение этой задачи.');
+            }
+            $flagId = $task->flag_id;
             DB::table('tasks')->where('id', $id)->where('user_id', $boardOwnerId)->delete();
+            if ($flagId !== null) $this->deleteUnusedFlag((int) $flagId, (int) $list->board_id, $boardOwnerId);
 
             return $this->success(['deleted' => true]);
         }
@@ -583,9 +677,10 @@ class WorkspaceController
             $this->fail(404, 'Список не найден.');
         }
         $boardOwnerId = (int) $board->user_id;
+        $taskFlagIds = DB::table('tasks')->where('list_id', $id)->whereNotNull('flag_id')->pluck('flag_id')->all();
         DB::table('task_lists')->where('id', $id)->where('user_id', $boardOwnerId)->delete();
-        if ($list->flag_id !== null) {
-            $this->deleteUnusedFlag((int) $list->flag_id, (int) $list->board_id, $boardOwnerId);
+        foreach (array_unique([...$taskFlagIds, ...($list->flag_id === null ? [] : [(int) $list->flag_id])]) as $flagId) {
+            $this->deleteUnusedFlag((int) $flagId, (int) $list->board_id, $boardOwnerId);
         }
 
         return $this->success(['deleted' => true]);
@@ -595,6 +690,7 @@ class WorkspaceController
     {
         DB::table('user_flags')->where('id', $flagId)->where('board_id', $boardId)->where('user_id', $userId)
             ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('task_lists')->whereColumn('task_lists.flag_id', 'user_flags.id'))
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('tasks')->whereColumn('tasks.flag_id', 'user_flags.id'))
             ->delete();
     }
 
@@ -641,7 +737,14 @@ class WorkspaceController
 
     private function taskData(object $task): array
     {
-        return ['id' => (int) $task->id, 'list_id' => (int) $task->list_id, 'title' => $task->title, 'is_completed' => (bool) $task->is_completed];
+        return ['id' => (int) $task->id, 'list_id' => (int) $task->list_id, 'title' => $task->title,
+            'is_completed' => (bool) $task->is_completed, 'description' => $task->description,
+            'is_important' => (bool) $task->is_important, 'urgency' => (int) $task->urgency,
+            'due_date' => $task->due_date, 'deadline' => $task->deadline,
+            'location' => $task->location, 'scheduled_time' => $task->scheduled_time,
+            'flag' => $task->flag_id === null ? null : ['id' => (int) $task->flag_id,
+                'name' => $task->flag_name, 'color' => $task->flag_color]]
+            + ($task->repeat_interval === null ? [] : ['repeat_interval' => $task->repeat_interval]);
     }
 
     private function flagData(object $flag, bool $withBoard): array

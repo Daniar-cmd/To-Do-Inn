@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
@@ -251,8 +252,10 @@ class WorkspaceTest extends DatabaseTestCase
             ->assertJsonPath('data.lists.0.flag', ['id' => $flag, 'name' => 'Flag', 'color' => 'blue'])
             ->assertJsonPath('data.flags.0.board_id', $this->board)
             ->assertJsonPath('data.tasks', [
-                ['id' => $task, 'list_id' => $id, 'title' => 'First', 'is_completed' => false],
-                ['id' => $second, 'list_id' => $id, 'title' => 'Second', 'is_completed' => false],
+                ['id' => $task, 'list_id' => $id, 'title' => 'First', 'is_completed' => false,
+                    'description' => '', 'is_important' => false, 'urgency' => 0, 'due_date' => null, 'deadline' => null, 'location' => null, 'scheduled_time' => null, 'flag' => null],
+                ['id' => $second, 'list_id' => $id, 'title' => 'Second', 'is_completed' => false,
+                    'description' => '', 'is_important' => false, 'urgency' => 0, 'due_date' => null, 'deadline' => null, 'location' => null, 'scheduled_time' => null, 'flag' => null],
             ]);
         $this->assertSame(DB::table('task_lists')->where('id', $id)->value('created_at'), $response->json('data.lists.0.created_at'));
         $this->postWorkspace(['action' => 'update_list', 'list_id' => $id, 'name' => 'Updated', 'description' => ' New description ', 'flag_id' => $flag])
@@ -260,6 +263,123 @@ class WorkspaceTest extends DatabaseTestCase
                 'flag' => ['id' => $flag, 'board_id' => $this->board, 'name' => 'Flag', 'color' => 'blue']]]);
         $this->request()->assertJsonPath('data.lists.0.description', 'New description')
             ->assertJsonPath('data.lists.0.theme', 'blue')->assertJsonPath('data.lists.0.is_important', false);
+    }
+
+    public function test_task_metadata_is_saved_returned_and_flags_are_scoped_to_the_same_board(): void
+    {
+        $list = $this->list($this->user->id, $this->board, 'Metadata list');
+        $flag = $this->flag($this->user->id, $this->board, 'Task flag');
+        $dueDate = today()->addDays(5)->toDateString();
+        $deadline = today()->addDays(8)->toDateString();
+        $created = $this->postWorkspace([
+            'action' => 'create_task', 'list_id' => $list, 'title' => ' Task with metadata ',
+            'description' => '  Task details  ', 'is_important' => true, 'urgency' => 4,
+            'flag_id' => $flag, 'due_date' => $dueDate,
+            'location' => '  Office  ', 'scheduled_time' => '09:30',
+        ])->assertCreated()->assertJsonPath('data.task.description', 'Task details')
+            ->assertJsonPath('data.task.is_important', true)->assertJsonPath('data.task.urgency', 4)
+            ->assertJsonPath('data.task.due_date', $dueDate)->assertJsonPath('data.task.deadline', null)
+            ->assertJsonPath('data.task.location', 'Office')->assertJsonPath('data.task.scheduled_time', '09:30:00')
+            ->assertJsonPath('data.task.flag', ['id' => $flag, 'name' => 'Task flag', 'color' => 'blue']);
+        $taskId = $created->json('data.task.id');
+        $this->assertDatabaseHas('tasks', [
+            'id' => $taskId, 'board_id' => $this->board, 'description' => 'Task details',
+            'is_important' => true, 'urgency' => 4, 'flag_id' => $flag, 'due_date' => $dueDate, 'deadline' => null,
+            'location' => 'Office', 'scheduled_time' => '09:30:00',
+        ]);
+        $this->request()->assertJsonPath('data.tasks.0.description', 'Task details')
+            ->assertJsonPath('data.tasks.0.flag.id', $flag);
+        $this->request(query: '?search=metadata')->assertJsonPath('data.results.0.tasks.0.is_important', true);
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Deadline task', 'deadline' => $deadline])
+            ->assertCreated()->assertJsonPath('data.task.due_date', null)->assertJsonPath('data.task.deadline', $deadline);
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Both', 'due_date' => $dueDate, 'deadline' => $deadline])
+            ->assertUnprocessable();
+
+        foreach ([1, 2, 3, 4] as $level) {
+            $levelTask = $this->postWorkspace([
+                'action' => 'create_task', 'list_id' => $list, 'title' => 'Urgency '.$level, 'urgency' => $level,
+            ])->assertCreated()->assertJsonPath('data.task.urgency', $level)->json('data.task.id');
+            $this->assertDatabaseHas('tasks', ['id' => $levelTask, 'urgency' => $level]);
+        }
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Invalid urgency', 'urgency' => 5])
+            ->assertUnprocessable()->assertJsonPath('error', 'Проверьте параметры задачи.');
+
+        $otherBoard = $this->board($this->user->id, 'Other board');
+        $otherList = $this->list($this->user->id, $otherBoard, 'Other list');
+        $otherFlag = $this->flag($this->user->id, $otherBoard, 'Other board flag');
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Invalid flag', 'flag_id' => $otherFlag])
+            ->assertNotFound()->assertJsonPath('error', 'Флаг не найден.');
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Time without location', 'scheduled_time' => '09:30'])
+            ->assertUnprocessable()->assertJsonPath('error', 'Время можно указать только для задачи с локацией.');
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $otherList, 'title' => 'New flag', 'new_flag_name' => 'Created with task'])
+            ->assertCreated()->assertJsonPath('data.task.flag.name', 'Created with task');
+    }
+
+    public function test_repeating_tasks_are_generated_once_and_can_be_stopped(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-01-31 10:00:00', 'UTC'));
+        $list = $this->list($this->user->id, $this->board, 'Repeating list');
+        $flag = $this->flag($this->user->id, $this->board, 'Recurring flag');
+        $original = $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Monthly',
+            'due_date' => '2026-01-31', 'repeat_interval' => 'monthly', 'flag_id' => $flag, 'urgency' => 2,
+            'description' => 'Same details'])->assertCreated()->assertJsonPath('data.task.repeat_interval', 'monthly')
+            ->json('data.task.id');
+        $this->postWorkspace(['action' => 'toggle_task', 'task_id' => $original, 'is_completed' => true])->assertOk();
+        $this->postWorkspace(['action' => 'delete_task', 'task_id' => $original])->assertStatus(409);
+        $this->postWorkspace(['action' => 'toggle_task', 'task_id' => $original, 'is_completed' => false])->assertOk();
+        foreach ([['repeat_interval' => 'monthly'], ['due_date' => '2026-01-31', 'repeat_interval' => 'never']] as $invalid) {
+            $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Invalid'] + $invalid)->assertUnprocessable();
+        }
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $tasks = DB::table('tasks')->where('list_id', $list)->orderBy('repeat_sequence')->get();
+        $this->assertCount(2, $tasks);
+        $this->assertSame(['2026-01-31', '2026-02-28'], $tasks->pluck('due_date')->all());
+        $this->assertSame('Same details', $tasks[1]->description);
+        $this->assertSame($flag, (int) $tasks[1]->flag_id);
+        $this->assertSame(2, (int) $tasks[1]->urgency);
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-02-28 10:00:00', 'UTC'));
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertDatabaseHas('tasks', ['list_id' => $list, 'repeat_sequence' => 2, 'due_date' => '2026-03-31']);
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $original])->assertOk();
+        $this->assertSame(0, DB::table('tasks')->where('list_id', $list)->whereNotNull('repeat_interval')->count());
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-04-30 10:00:00', 'UTC'));
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertSame(3, DB::table('tasks')->where('list_id', $list)->count());
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $original])->assertStatus(409);
+        $this->travelBack();
+    }
+
+    public function test_repeating_deadlines_and_foreign_series_are_scoped_to_the_owner(): void
+    {
+        $list = $this->list($this->user->id, $this->board, 'Deadlines');
+        $deadline = today()->toDateString();
+        $id = $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Every week',
+            'deadline' => $deadline, 'repeat_interval' => 'weekly'])->assertCreated()->json('data.task.id');
+        Auth::login($this->other);
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $id])->assertNotFound();
+        Auth::login($this->user);
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertDatabaseHas('tasks', ['list_id' => $list, 'repeat_sequence' => 1,
+            'deadline' => today()->addWeek()->toDateString(), 'due_date' => null]);
+    }
+
+    public function test_daily_and_yearly_repeats_keep_the_original_calendar_anchor(): void
+    {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2028-02-29 10:00:00', 'UTC'));
+        $list = $this->list($this->user->id, $this->board, 'Calendar repeats');
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Daily',
+            'due_date' => '2028-02-29', 'repeat_interval' => 'daily'])->assertCreated();
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Leap year',
+            'deadline' => '2028-02-29', 'repeat_interval' => 'yearly'])->assertCreated();
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertDatabaseHas('tasks', ['title' => 'Daily', 'repeat_sequence' => 1, 'due_date' => '2028-03-01']);
+        $this->assertDatabaseHas('tasks', ['title' => 'Leap year', 'repeat_sequence' => 1, 'deadline' => '2029-02-28']);
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2028-03-02 10:00:00', 'UTC'));
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertDatabaseHas('tasks', ['title' => 'Daily', 'repeat_sequence' => 3, 'due_date' => '2028-03-03']);
+        $this->assertSame(6, DB::table('tasks')->where('list_id', $list)->count());
+        $this->travelBack();
     }
 
     public function test_sky_theme_is_accepted_and_persisted_for_a_list(): void
@@ -689,10 +809,10 @@ class WorkspaceTest extends DatabaseTestCase
         $this->assertSame($before, $this->state());
     }
 
-    public function test_inconsistent_legacy_task_cannot_modify_a_foreign_list(): void
+    public function test_task_on_another_users_board_cannot_be_modified(): void
     {
         $foreignList = $this->list($this->other->id, $this->foreignBoard);
-        $task = $this->task($this->user->id, $foreignList, 'Inconsistent legacy row');
+        $task = $this->task($this->other->id, $foreignList, 'Private task');
         $this->postWorkspace(['action' => 'toggle_task', 'task_id' => $task, 'is_completed' => true])->assertNotFound();
         $this->request()->assertJsonCount(0, 'data.tasks');
     }
@@ -805,7 +925,8 @@ class WorkspaceTest extends DatabaseTestCase
 
     private function task(int $user, int $list, string $title, int $order = 0): int
     {
-        return DB::table('tasks')->insertGetId(['user_id' => $user, 'list_id' => $list, 'title' => $title, 'sort_order' => $order]);
+        $board = DB::table('task_lists')->where('id', $list)->value('board_id');
+        return DB::table('tasks')->insertGetId(['user_id' => $user, 'list_id' => $list, 'board_id' => $board, 'title' => $title, 'sort_order' => $order]);
     }
 
     private function taskOrder(int $list): array

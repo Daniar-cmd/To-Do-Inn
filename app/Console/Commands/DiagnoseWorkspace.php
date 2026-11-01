@@ -23,7 +23,7 @@ class DiagnoseWorkspace extends Command
         'boards' => ['id', 'user_id', 'corporate_account_id', 'name', 'description', 'board_type', 'is_default', 'lists_order_customized'],
         'task_lists' => ['id', 'user_id', 'board_id', 'name', 'description', 'created_at', 'is_important', 'theme', 'is_pinned', 'sort_order', 'flag_id'],
         'user_flags' => ['id', 'user_id', 'board_id', 'name', 'color'],
-        'tasks' => ['id', 'user_id', 'list_id', 'title', 'is_completed', 'sort_order'],
+        'tasks' => ['id', 'user_id', 'list_id', 'board_id', 'title', 'description', 'is_important', 'is_urgent', 'urgency', 'flag_id', 'due_date', 'deadline', 'location', 'scheduled_time', 'is_completed', 'sort_order'],
         'corporate_accounts' => ['id', 'organization_name'],
         'corporate_account_members' => ['corporate_account_id', 'user_id', 'accepted_at', 'role'],
     ];

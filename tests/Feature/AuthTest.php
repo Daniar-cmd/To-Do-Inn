@@ -99,7 +99,7 @@ class AuthTest extends DatabaseTestCase
         $createdAt = $user->created_at->toDateTimeString();
         $board = $user->boards()->create(['name' => 'Мои старые дела', 'is_default' => true]);
         $listId = DB::table('task_lists')->insertGetId(['user_id' => $user->id, 'board_id' => $board->id, 'name' => 'Старый список']);
-        $taskId = DB::table('tasks')->insertGetId(['user_id' => $user->id, 'list_id' => $listId, 'title' => 'Сохранить эту задачу']);
+        $taskId = DB::table('tasks')->insertGetId(['user_id' => $user->id, 'list_id' => $listId, 'board_id' => $board->id, 'title' => 'Сохранить эту задачу']);
 
         Auth::login($user);
         $newEmail = 'upgraded-'.bin2hex(random_bytes(5)).'@example.com';
@@ -151,7 +151,7 @@ class AuthTest extends DatabaseTestCase
             'user_id' => $user->id, 'board_id' => $board->id, 'name' => 'Не трогать список',
         ]);
         $taskId = DB::table('tasks')->insertGetId([
-            'user_id' => $user->id, 'list_id' => $listId, 'title' => 'Не трогать задачу',
+            'user_id' => $user->id, 'list_id' => $listId, 'board_id' => $board->id, 'title' => 'Не трогать задачу',
         ]);
         Auth::login($user);
         $this->withSession([

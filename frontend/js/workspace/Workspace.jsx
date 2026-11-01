@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
 import { NotificationsMenu } from '../NotificationsMenu.jsx';
 import { ListGrid } from './ListGrid.jsx';
@@ -21,6 +22,13 @@ const themes = [
   ['amber', 'Янтарная тема'],
   ['rose', 'Розовая тема'],
   ['sky', 'Голубая тема'],
+];
+
+const taskUrgencyLevels = [
+  { value: 1, mark: '!', label: 'Несрочно' },
+  { value: 2, mark: '!!', label: 'Умеренная срочность' },
+  { value: 3, mark: '!!!', label: 'Срочно' },
+  { value: 4, mark: '!!!!', label: 'Критично' },
 ];
 
 function formatListCreatedAt(value) {
@@ -84,15 +92,31 @@ function completedTasksLabel(count) {
   return `Выполнено ${count} ${noun}`;
 }
 
-function ListTask({ task, csrfToken, onToggle, onChange, onReorder, onDelete, animating, draggingTaskId, onDragStart, onDragEnd }) {
+function TaskBadges({ flag, dueDate, deadline, urgency, location }) {
+  const deadlineLabel = deadline
+    ? `${deadline.slice(8, 10)}.${deadline.slice(5, 7)}.${deadline.slice(2, 4)}`
+    : '';
+  return <span className="task-list-card__task-badges">
+    {flag && <span className={`task-list-card__flag-tag is-${flag.color}`}>{flag.name}</span>}
+    {dueDate && <time className="task-list-card__due-date is-scheduled" dateTime={dueDate}>{formatListDueDate(dueDate)}</time>}
+    {deadline && <time className="task-list-card__due-date is-deadline" dateTime={deadline} aria-label={`Дедлайн: ${deadlineLabel}`} title={`Дедлайн: ${deadlineLabel}`}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M12 22c4.5 0 7-3 7-7 0-3-1.5-5-4-7 .3 2-1 3.3-2 4-1-3-.5-5.5-2.5-9C9 6 5 9 5 15c0 4 2.5 7 7 7Z"/><path d="M12 22c2.3 0 3.5-1.4 3.5-3.4 0-1.8-1-3-2.5-4.6-.2 1.4-1.1 2.2-2.1 2.8-.4-.8-.5-1.5-.4-2.3-1.4 1.7-2 3-2 4 0 2 1.2 3.1 3.5 3.1Z"/></svg>{deadlineLabel}</time>}
+    {urgency > 0 && <span className={`task-list-card__task-urgency is-level-${urgency}`} aria-label={`Срочность: ${taskUrgencyLevels[urgency - 1]?.label}`} title={taskUrgencyLevels[urgency - 1]?.label}>{'!'.repeat(urgency)}</span>}
+    {location && <span className="task-list-card__location">{location}</span>}
+  </span>;
+}
+
+function ListTask({ task, csrfToken, onToggle, onChange, onReorder, onDelete, animating, draggingTaskId, onDragStart, onDragEnd, isFullscreen = false }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
   const [error, setError] = useState('');
+  const [confirmingRepeatStop, setConfirmingRepeatStop] = useState(false);
+  const [stoppingRepeat, setStoppingRepeat] = useState(false);
   const [dropTarget, setDropTarget] = useState(false);
   const draggedRef = useRef(false);
   const cancelledEdit = useRef(false);
   const savingTitle = useRef(false);
   const completed = task.is_completed || animating;
+  const annotation = task.description?.replace(/\s+/g, ' ').trim();
 
   useEffect(() => setTitle(task.title), [task.title]);
 
@@ -122,22 +146,60 @@ function ListTask({ task, csrfToken, onToggle, onChange, onReorder, onDelete, an
     }
   }
 
+  async function stopRepeat() {
+    if (stoppingRepeat) return;
+    setStoppingRepeat(true);
+    try {
+      await updateWorkspace({ action: 'stop_task_repeat', task_id: task.id }, csrfToken);
+      setError('');
+      setConfirmingRepeatStop(false);
+      await onChange();
+    } catch (err) { setError(err.message); }
+    finally { setStoppingRepeat(false); }
+  }
+
   return <li className={`${dropTarget ? 'is-drop-target ' : ''}${draggingTaskId === task.id ? 'is-dragging' : ''}`} onDragOver={(event) => { if (task.is_completed) return; event.preventDefault(); setDropTarget(true); }} onDragLeave={() => setDropTarget(false)} onDrop={(event) => { event.preventDefault(); setDropTarget(false); if (task.is_completed) return; const draggedId = Number(event.dataTransfer.getData('text/plain')); if (draggedId && draggedId !== task.id) onReorder(draggedId, task.id); onDragEnd(); }}>
     <div className={`task-list-card__task${completed ? ' is-completed' : ''}${animating ? ' is-completing' : ''}`}>
+      {task.is_important && !editing && <span className="task-list-card__task-important" aria-label="Важная задача" title="Важная задача"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3-1.1-6.3L3 9.4l6.2-.9L12 2.8Z" /></svg></span>}
       <span className="task-list-card__task-control">
         <input type="checkbox" aria-label={`Отметить задачу «${task.title}» выполненной`} checked={task.is_completed || animating} onChange={() => onToggle(task)} />
         <span className="task-list-card__task-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><path d="m5 10 3.2 3.2L15 6.5" /></svg></span>
       </span>
-      {editing ? <input className="task-list-card__task-edit" aria-label="Название задачи" autoFocus maxLength="240" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelledEdit.current = true; event.currentTarget.blur(); } }} /> : <span className="task-list-card__task-title" onDoubleClick={() => { if (!completed) { setTitle(task.title); setEditing(true); } }}>{task.title}</span>}
+      <div className="task-list-card__task-content">
+        <div className="task-list-card__task-line">
+          {editing ? <input className="task-list-card__task-edit" aria-label="Название задачи" autoFocus maxLength="240" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelledEdit.current = true; event.currentTarget.blur(); } }} /> : <span className="task-list-card__task-title" onDoubleClick={() => { if (!completed) { setTitle(task.title); setEditing(true); } }}>{task.title}</span>}{' '}
+           {!editing && <TaskBadges flag={task.flag} dueDate={task.due_date} deadline={task.deadline} urgency={task.urgency} location={task.location && `${task.location}${task.scheduled_time ? ` · ${task.scheduled_time.slice(0, 5)}` : ''}`} />}
+        </div>
+        {annotation && <span className="task-list-card__task-description" title={task.description}>{Array.from(annotation).slice(0, 60).join('')}{Array.from(annotation).length > 60 ? '…' : ''}</span>}
+        {isFullscreen && task.repeat_interval && <button className="task-list-card__stop-repeat" type="button" aria-label={`Остановить повторение: ${({ daily: 'ежедневно', weekly: 'еженедельно', monthly: 'ежемесячно', yearly: 'ежегодно' })[task.repeat_interval]}`} title="Новые экземпляры больше не создадутся" onClick={() => setConfirmingRepeatStop(true)}>Повтор {({ daily: 'ежедневно', weekly: 'еженедельно', monthly: 'ежемесячно', yearly: 'ежегодно' })[task.repeat_interval]} · Остановить</button>}
+      </div>
       {!editing && !completed && <button className="task-list-card__task-menu" type="button" draggable="true" aria-label="Перетащить задачу или изменить её название" title="Нажми для переименования, перетащи для сортировки" onClick={() => { if (!draggedRef.current) { setTitle(task.title); setEditing(true); } }} onDragStart={(event) => { draggedRef.current = true; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(task.id)); onDragStart(task.id); }} onDragEnd={() => { onDragEnd(); window.setTimeout(() => { draggedRef.current = false; }, 0); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>}
       {!editing && task.is_completed && <button className="task-list-card__task-delete" type="button" aria-label={`Удалить выполненную задачу «${task.title}»`} title="Удалить выполненную задачу" onClick={onDelete}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></svg></button>}
     </div>
     {error && <p className="task-list-card__error" role="alert">{error}</p>}
+    {confirmingRepeatStop && <ListDeleteDialog id={`stop-repeat-title-${task.id}`} title="Остановить повторение?" error={error} busy={stoppingRepeat} busyLabel="Останавливаем…" confirmLabel="Остановить" onClose={() => { if (!stoppingRepeat) { setConfirmingRepeatStop(false); setError(''); } }} onConfirm={stopRepeat} theme={document.querySelector?.('.workspace-shell')?.dataset.theme}>
+      Новые экземпляры задачи «{task.title}» больше не будут создаваться. Уже созданные задачи останутся.
+    </ListDeleteDialog>}
   </li>;
 }
 
-function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, onFlagCreated, onTogglePin, dragHandle }) {
+function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, onFlagCreated, onTogglePin, dragHandle, isFullscreen = false }) {
   const [taskName, setTaskName] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [taskImportant, setTaskImportant] = useState(false);
+  const [taskUrgency, setTaskUrgency] = useState(0);
+  const [taskUrgencyOpen, setTaskUrgencyOpen] = useState(false);
+  const [taskFlagId, setTaskFlagId] = useState('');
+  const [taskNewFlagName, setTaskNewFlagName] = useState('');
+  const [taskDueDate, setTaskDueDate] = useState(null);
+  const [taskLocation, setTaskLocation] = useState('');
+  const [taskDeadline, setTaskDeadline] = useState(null);
+  const [taskRepeat, setTaskRepeat] = useState(null);
+  const [taskLocationOpen, setTaskLocationOpen] = useState(false);
+  const [taskDescriptionOpen, setTaskDescriptionOpen] = useState(false);
+  const [taskMoreOptionsOpen, setTaskMoreOptionsOpen] = useState(false);
+  const [taskFlagOpen, setTaskFlagOpen] = useState(false);
+  const [taskDateOpen, setTaskDateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -163,9 +225,102 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, onFlagCr
   const pendingToggles = useRef(new Set());
   const savingDetailsRef = useRef(false);
   const [addingTask, setAddingTask] = useState(false);
+  const [taskEntryOpen, setTaskEntryOpen] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const taskEntryRef = useRef(null);
+  const taskTriggerRef = useRef(null);
+  const taskInlineComposerRef = useRef(null);
+  const taskOptionsRef = useRef(null);
   const pending = tasks.filter((task) => !task.is_completed);
   const completed = tasks.filter((task) => task.is_completed);
+  const draftFlag = taskNewFlagName.trim()
+    ? { name: taskNewFlagName.trim(), color: 'blue' }
+    : flags.find((flag) => String(flag.id) === String(taskFlagId));
+
+  function resetTaskDraft() {
+    setTaskName('');
+    setTaskDescription('');
+    setTaskImportant(false);
+    setTaskUrgency(0);
+    setTaskUrgencyOpen(false);
+    setTaskFlagId('');
+    setTaskNewFlagName('');
+    setTaskDueDate(null);
+    setTaskLocation('');
+    setTaskDeadline(null);
+    setTaskRepeat(null);
+    setTaskLocationOpen(false);
+    setTaskDescriptionOpen(false);
+    setTaskMoreOptionsOpen(false);
+    setTaskFlagOpen(false);
+    setTaskDateOpen(false);
+  }
+
+  function closeTaskPropertyPopovers(except = null) {
+    const keepOptionsOpen = ['options', 'urgency', 'annotation', 'location', 'flag'].includes(except);
+    if (!keepOptionsOpen) setTaskMoreOptionsOpen(false);
+    if (except !== 'urgency') setTaskUrgencyOpen(false);
+    if (except !== 'location') setTaskLocationOpen(false);
+    if (except !== 'flag') setTaskFlagOpen(false);
+    if (except !== 'date') setTaskDateOpen(false);
+  }
+
+  function closeTaskComposer() {
+    if (addingTaskRef.current) return;
+    setTaskEntryOpen(false);
+    resetTaskDraft();
+  }
+
+  useEffect(() => {
+    if (!taskEntryOpen) return undefined;
+    const body = document.body;
+    const previous = {
+      overflow: body.style.overflow,
+      position: body.style.position,
+      top: body.style.top,
+      left: body.style.left,
+      right: body.style.right,
+      width: body.style.width,
+    };
+    const mobileOverlay = !isFullscreen && window.matchMedia('(max-width: 700px)').matches;
+    const scrollTop = window.scrollY;
+    if (!isFullscreen) {
+      body.style.overflow = 'hidden';
+      if (mobileOverlay) {
+        body.style.position = 'fixed';
+        body.style.top = `-${scrollTop}px`;
+        body.style.left = '0';
+        body.style.right = '0';
+        body.style.width = '100%';
+      }
+    }
+    taskEntryRef.current?.focus({ preventScroll: true });
+    function closeOnEscape(event) {
+      if (event.key === 'Escape' && !addingTaskRef.current) {
+        event.preventDefault();
+        closeTaskComposer();
+      }
+    }
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+      if (!isFullscreen) {
+        Object.assign(body.style, previous);
+        if (mobileOverlay) window.scrollTo(0, scrollTop);
+      }
+      if (taskTriggerRef.current?.isConnected) taskTriggerRef.current.focus({ preventScroll: true });
+    };
+  }, [taskEntryOpen, isFullscreen]);
+
+  useEffect(() => {
+    if (!taskMoreOptionsOpen && !taskFlagOpen && !taskDateOpen) return undefined;
+    function closeTaskOptions(event) {
+      if (taskOptionsRef.current?.contains(event.target)) return;
+      closeTaskPropertyPopovers();
+    }
+    document.addEventListener('pointerdown', closeTaskOptions);
+    return () => document.removeEventListener('pointerdown', closeTaskOptions);
+  }, [taskMoreOptionsOpen, taskFlagOpen, taskDateOpen]);
 
   useEffect(() => {
     if (editing) return;
@@ -188,8 +343,15 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, onFlagCr
     addingTaskRef.current = true;
     setAddingTask(true);
     try {
-      await updateWorkspace({ action: 'create_task', list_id: list.id, title: taskName.trim() }, csrfToken);
-      setTaskName('');
+      const result = await updateWorkspace({
+        action: 'create_task', list_id: list.id, title: taskName.trim(),
+        description: taskDescription.trim(), is_important: taskImportant, urgency: taskUrgency,
+        flag_id: taskFlagId || null, new_flag_name: taskNewFlagName.trim(), due_date: taskDueDate,
+        location: taskLocation.trim() || null, deadline: taskDeadline, repeat_interval: taskRepeat,
+      }, csrfToken);
+      if (result.task.flag) onFlagCreated({ ...result.task.flag, board_id: list.board_id });
+      resetTaskDraft();
+      setTaskEntryOpen(false);
       await onChange();
     } catch (err) { setError(err.message); }
     finally { addingTaskRef.current = false; setAddingTask(false); }
@@ -348,13 +510,116 @@ function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, onFlagCr
       <div className="task-list-card__edit-actions"><button type="button" className="task-list-card__cancel" disabled={savingDetails} onClick={() => setEditing(false)}>Отмена</button><button type="submit" disabled={savingDetails}>{savingDetails ? 'Сохраняем…' : 'Сохранить'}</button></div>
     </form> : <>
        <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{(list.flag || list.due_date) && <div className="task-list-card__meta-tags">{list.flag && <span className={`task-list-card__flag-tag is-${list.flag.color}`}>{list.flag.name}</span>}{list.due_date && <time className="task-list-card__due-date" dateTime={list.due_date}>{formatListDueDate(list.due_date)}</time>}</div>}{list.description && <p className="task-list-card__description">{list.description}</p>}</div>
-       <form className="task-list-card__add" onSubmit={addTask}><input aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} disabled={addingTask} onChange={(event) => setTaskName(event.target.value)} /><button type="submit" aria-label="Добавить задачу" disabled={addingTask}>Добавить</button></form>
+          <div className={`task-list-card__composer-anchor${taskEntryOpen && isFullscreen ? ' is-expanded' : ''}`}>
+            <form className="task-list-card__add" onSubmit={addTask}><input ref={taskTriggerRef} aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} disabled={addingTask} onClick={() => setTaskEntryOpen(true)} onChange={(event) => { setTaskName(event.target.value); if (event.target.value) setTaskEntryOpen(true); }} /><button type="submit" aria-label="Добавить задачу" disabled={addingTask}>Добавить</button></form>
+            {isFullscreen && <div ref={taskInlineComposerRef} className={`task-list-card__inline-composer${taskEntryOpen ? ' is-open' : ''}`} />}
+         </div>
        {pending.length > 0 && <div className="task-list-card__section-label">ЗАДАЧИ</div>}
-       <ul className={`task-list-card__tasks${completed.length === 0 ? ' has-no-completed' : ''}`}>{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>
-      {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} />)}</ul>}</footer>}
+        <ul className={`task-list-card__tasks${completed.length === 0 ? ' has-no-completed' : ''}`}>{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} isFullscreen={isFullscreen} />)}</ul>
+       {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} isFullscreen={isFullscreen} />)}</ul>}</footer>}
       {error && <p role="alert" className="task-list-card__error">{error}</p>}
     </>}
   </article>
+  {taskEntryOpen && createPortal(<div className={isFullscreen ? 'task-create-overlay is-inline' : 'workspace-shell task-create-overlay'} data-theme={articleRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} onMouseDown={(event) => {
+    if (event.target === event.currentTarget) closeTaskComposer();
+  }}>
+    <form className={`task-create-dialog${isFullscreen ? ' task-create-dialog--inline' : ''}`} role="dialog" aria-modal={isFullscreen ? undefined : true} aria-label="Добавить новую задачу" onSubmit={addTask} onKeyDown={(event) => {
+      if (event.key === 'Tab') {
+        if (isFullscreen) return;
+        const controls = [...event.currentTarget.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])')]
+          .filter((control) => control.getClientRects().length > 0
+            && (!control.closest('details:not([open])') || control.tagName === 'SUMMARY'));
+        const index = controls.indexOf(document.activeElement);
+        if (event.shiftKey && index === 0) { event.preventDefault(); controls.at(-1)?.focus(); }
+        else if (!event.shiftKey && index === controls.length - 1) { event.preventDefault(); controls[0]?.focus(); }
+      }
+    }}>
+      {!isFullscreen && <h2 className="task-create-dialog__mobile-title">Новая задача</h2>}
+      <div className="task-create-dialog__name-row">
+        <button className="task-create-close" type="button" aria-label="Закрыть создание задачи" title="Закрыть" disabled={addingTask} onClick={closeTaskComposer}><PlusIcon /></button>
+         <div className="task-create-dialog__inline-field">
+            <span className="task-create-dialog__input-wrap"><span className="task-create-dialog__input-measure" aria-hidden="true">{taskName ? `${taskName} ` : 'Что нужно сделать?'}</span><input ref={taskEntryRef} aria-label="Название новой задачи" placeholder="Что нужно сделать?" enterKeyHint="done" maxLength="240" value={taskName} disabled={addingTask} onChange={(event) => setTaskName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent?.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /></span>
+           <TaskBadges flag={draftFlag} dueDate={taskDueDate} deadline={taskDeadline} urgency={taskUrgency} location={taskLocation.trim()} />
+         </div>
+         <button className="task-create-dialog__submit" type="submit" aria-label="Добавить задачу" disabled={addingTask || !taskName.trim()}><span className="task-create-dialog__submit-label">{addingTask ? 'Добавляем…' : 'Добавить'}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 5 5L19 7" /></svg></button>
+      </div>
+      <div ref={taskOptionsRef} className="task-create-dialog__options">
+         {taskDescriptionOpen && <div id={`task-annotation-${list.id}`} className="task-create-dialog__description"><textarea rows="2" aria-label="Текст аннотации" maxLength="2000" placeholder="Напишите аннотацию" value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} /></div>}
+          <div className={`list-creator__toolbar task-list-card__edit-toolbar task-create-toolbar${taskMoreOptionsOpen ? ' is-more-open' : ''}`}>
+          <button className={`list-option-button${taskImportant ? ' is-selected' : ''}`} type="button" aria-label={taskImportant ? 'Убрать отметку важной задачи' : 'Отметить задачу звездой'} title="Важная задача" aria-pressed={taskImportant} onClick={() => setTaskImportant((value) => !value)}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z" /></svg>
+          </button>
+          <button className="list-option-button list-creator__more task-create-more-button" type="button" aria-label={taskMoreOptionsOpen ? 'Скрыть дополнительные параметры задачи' : 'Показать срочность, аннотацию и локацию'} aria-expanded={taskMoreOptionsOpen} aria-controls={`task-options-${list.id}`} onClick={() => {
+            const open = !taskMoreOptionsOpen;
+            closeTaskPropertyPopovers(open ? 'options' : null);
+            setTaskMoreOptionsOpen(open);
+          }}><PlusIcon /></button>
+           <div id={`task-options-${list.id}`} className={`list-creator__extra-row task-create-menu${taskUrgencyOpen ? ' is-urgency-open' : ''}`} inert={!taskMoreOptionsOpen} aria-hidden={!taskMoreOptionsOpen} onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (taskUrgencyOpen) {
+              setTaskUrgencyOpen(false);
+              taskOptionsRef.current?.querySelector('.task-urgency-picker')?.focus();
+            } else if (taskLocationOpen) {
+              closeTaskPropertyPopovers('options');
+              taskOptionsRef.current?.querySelector('[aria-label="Локация"]')?.focus();
+            } else {
+              setTaskMoreOptionsOpen(false);
+              taskOptionsRef.current?.querySelector('.task-create-more-button')?.focus();
+            }
+          }}>
+            <div className="task-create-menu__main">
+               <button className={`list-option-button task-create-property-button task-urgency-picker${taskUrgency ? ` is-selected is-level-${taskUrgency}` : ''}`} type="button" aria-label="Выбрать срочность" title="Срочность" aria-pressed={taskUrgency > 0} aria-expanded={taskUrgencyOpen} aria-controls={`task-urgency-${list.id}`} onClick={() => {
+                const open = !taskUrgencyOpen;
+                closeTaskPropertyPopovers(open ? 'urgency' : 'options');
+                setTaskUrgencyOpen(open);
+              }}><span className="task-urgency-picker__mark">{taskUrgencyLevels[taskUrgency - 1]?.mark || '!'}</span><span>Срочность</span><svg className="task-urgency-picker__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg></button>
+                <button className={`list-option-button task-create-property-button task-create-menu__toggle${taskDescriptionOpen ? ' is-open' : ''}${taskDescription.trim() ? ' is-selected' : ''}`} type="button" aria-label="Аннотация" title="Аннотация" aria-expanded={taskDescriptionOpen} aria-controls={`task-annotation-${list.id}`} onClick={() => {
+                const open = !taskDescriptionOpen;
+                closeTaskPropertyPopovers(open ? 'annotation' : 'options');
+                setTaskDescriptionOpen(open);
+              }}><span className="task-create-menu__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 5h14M5 10h14M5 15h9M5 19h6" /></svg></span><span>Аннотация</span><svg className="task-create-menu__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg></button>
+                <button className={`list-option-button task-create-property-button task-create-menu__toggle${taskLocationOpen ? ' is-open' : ''}${taskLocation.trim() ? ' is-selected' : ''}`} type="button" aria-label="Локация" title="Локация" aria-expanded={taskLocationOpen} aria-controls={`task-location-${list.id}`} onClick={() => {
+                const open = !taskLocationOpen;
+                closeTaskPropertyPopovers(open ? 'location' : 'options');
+                setTaskLocationOpen(open);
+              }}><span className="task-create-menu__icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg></span><span className="task-create-menu__label">Локация</span><svg className="task-create-menu__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg></button>
+              {taskLocationOpen && <div id={`task-location-${list.id}`} className="task-create-menu__field"><input aria-label="Указать локацию" maxLength="160" placeholder="Введите локацию" value={taskLocation} onChange={(event) => setTaskLocation(event.target.value)} /></div>}
+            </div>
+              {taskUrgencyOpen && <div id={`task-urgency-${list.id}`} className="task-urgency-picker__panel" role="group" aria-label="Уровень срочности">
+                {taskUrgencyLevels.map((level) => <button className={`flag-picker__choice task-urgency-picker__choice is-level-${level.value}${taskUrgency === level.value ? ' is-selected' : ''}`} type="button" key={level.value} aria-pressed={taskUrgency === level.value} onClick={() => { setTaskUrgency((current) => current === level.value ? 0 : level.value); setTaskUrgencyOpen(false); taskOptionsRef.current?.querySelector('.task-urgency-picker')?.focus(); }}><span className="task-urgency-picker__mark">{level.mark}</span><span>{level.label}</span></button>)}
+            </div>}
+          </div>
+           <div className={`flag-picker${taskFlagOpen ? ' is-open' : ''}`} onKeyDown={(event) => {
+             if (event.key !== 'Escape' || !taskFlagOpen) return;
+             event.preventDefault();
+             event.stopPropagation();
+             setTaskFlagOpen(false);
+             event.currentTarget.querySelector('.task-create-property-button')?.focus();
+           }}>
+             <button className={`list-option-button task-create-property-button${taskFlagId || taskNewFlagName.trim() ? ' is-selected' : ''}`} type="button" aria-label="Назначить флаг задаче" title={draftFlag?.name || 'Флаг задачи'} aria-expanded={taskFlagOpen} aria-controls={`task-flags-${list.id}`} onClick={() => {
+               closeTaskPropertyPopovers('flag');
+               setTaskFlagOpen((open) => !open);
+             }}><FlagIcon color={flags.find((flag) => String(flag.id) === String(taskFlagId))?.color || 'blue'} /><span>Флаг</span></button>
+             <div id={`task-flags-${list.id}`} className="flag-picker__panel" hidden={!taskFlagOpen}>
+              <p className="flag-picker__title">Выберите флаг</p>
+               <button className={`flag-picker__choice${!taskFlagId && !taskNewFlagName ? ' is-selected' : ''}`} type="button" onClick={() => { setTaskFlagId(''); setTaskNewFlagName(''); setTaskFlagOpen(false); }}><span className="flag-picker__empty-icon" aria-hidden="true">—</span>Без флага</button>
+               {flags.map((flag) => <button className={`flag-picker__choice${String(taskFlagId) === String(flag.id) && !taskNewFlagName ? ' is-selected' : ''}`} type="button" key={flag.id} onClick={() => { setTaskFlagId(flag.id); setTaskNewFlagName(''); setTaskFlagOpen(false); }}><FlagIcon color={flag.color} /><span>{flag.name}</span></button>)}
+               {flags.length === 0 && <p className="task-create-flag-empty">Флагов пока нет — создайте первый ниже.</p>}
+              <label className="flag-picker__custom-label" htmlFor={`task-flag-name-${list.id}`}>Или создайте новый</label>
+               <input className="flag-picker__custom-input" id={`task-flag-name-${list.id}`} maxLength="40" placeholder="Название нового флага" value={taskNewFlagName} onChange={(event) => { setTaskNewFlagName(event.target.value); setTaskFlagId(''); }} />
+            </div>
+           </div>
+          <div className="list-creator__date"><ListDatePicker value={taskDueDate} open={taskDateOpen} onOpenChange={(open) => {
+            if (open) closeTaskPropertyPopovers('date');
+            setTaskDateOpen(open);
+           }} onChange={(date) => { setTaskDueDate(date); if (date) setTaskDeadline(null); }} deadline={taskDeadline} onDeadlineChange={(date) => { setTaskDeadline(date); if (date) setTaskDueDate(null); }} repeat={taskRepeat} onRepeatChange={setTaskRepeat} label="Дата" showSelectedDate={false} /></div>
+         </div>
+      </div>
+    </form>
+    {error && <p className="task-create-error" role="alert">{error}</p>}
+  </div>, isFullscreen ? taskInlineComposerRef.current || document.body : document.body)}
   {confirmingDelete && <ListDeleteDialog id={`delete-list-title-${list.id}`} title="Удалить список?" error={error} busy={deleting} confirmLabel="Удалить" onClose={() => setConfirmingDelete(false)} onConfirm={handleDeleteList} theme={articleRef.current?.closest('.workspace-shell')?.dataset.theme}>
     Вы точно хотите удалить этот список?
   </ListDeleteDialog>}
@@ -1218,7 +1483,7 @@ export function Workspace() {
                 <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
               </div>)}
             </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} onSwap={reorderListCards}>
-              {(list, dragHandle) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} />}
+              {(list, dragHandle, isFullscreen = false) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} isFullscreen={isFullscreen} />}
             </ListGrid>}
           </section>
           </>}

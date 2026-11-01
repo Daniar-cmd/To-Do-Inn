@@ -25,9 +25,10 @@ export function formatListDueDate(value, now = new Date()) {
   return shortDateLabel.format(new Date(year, month, day, 12));
 }
 
-export function quickDateHint(date, withWeekday = true) {
+export function quickDateHint(date, withWeekday = true, short = false) {
   const localDate = new Date(`${date}T12:00:00`);
-  return withWeekday ? `${dateLabel.format(localDate)}, ${weekdayLabel.format(localDate).replace(/\.$/, '')}` : dateLabel.format(localDate);
+  const formatted = (short ? shortDateLabel : dateLabel).format(localDate);
+  return withWeekday ? `${formatted}, ${weekdayLabel.format(localDate).replace(/\.$/, '')}` : formatted;
 }
 
 export function parseDateInput(input, now = new Date()) {

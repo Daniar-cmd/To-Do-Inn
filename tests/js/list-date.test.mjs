@@ -37,6 +37,8 @@ test('quick buttons show dates with short weekdays except next week', () => {
   assert.equal(quickDateHint('2026-10-29'), '29 октября, чт');
   assert.equal(quickDateHint(quickDates(new Date(2026, 9, 28))[2][1]), '1 ноября, вс');
   assert.equal(quickDateHint('2026-11-04', false), '4 ноября');
+  assert.match(quickDateHint('2026-09-30', true, true), /^30 сент.*ср$/);
+  assert.match(quickDateHint('2026-11-04', false, true), /^4 нояб/);
 });
 
 test('typed dates use the current month or year and reject past or nonexistent days', () => {

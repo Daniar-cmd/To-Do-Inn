@@ -8,6 +8,7 @@ use App\Http\Middleware\VerifyApiCsrfToken;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Foundation\Application;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -20,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
         web: __DIR__.'/../routes/web.php',
         health: '/up',
     )
+    ->withSchedule(fn (Schedule $schedule) => $schedule->command('tasks:repeat')->dailyAt('00:05')->withoutOverlapping())
     ->withMiddleware(function (Middleware $middleware): void {
         // Legacy validation is exact: do not silently trim credentials or turn optional empty fields into null.
         $middleware->trimStrings(except: [fn (Request $request) => $request->is('api/*')]);
