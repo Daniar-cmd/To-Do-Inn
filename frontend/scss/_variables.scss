@@ -7,3 +7,24 @@ $muted: #64748b;
 $border: #d9e2ed;
 $surface: #ffffff;
 $focus: #85b6ff;
+
+// Approved workspace palette; CSS variable names remain compatible with the app.
+$workspace-light: (bg: #f4f7fb, surface: #ffffff, text: #15243d, muted: #68778d, border: #e1e7ef, hover: #f0f4f9);
+$workspace-dark: (bg: #111b2b, surface: #182438, text: #e8eef8, muted: #9eacc0, border: #2a3950, hover: #223149);
+$task-accent: #3478d4;
+$important-background: #fff5d6;
+$important-border: #d8ad45;
+$important-text: #a36c0e;
+$flag-colors: (blue: #3478d4, violet: #8b5cc7, green: #31946c, amber: #c8871a, rose: #d15c79);
+
+// These are existing application values, not a new visual scale.
+$spacing: (4: 4px, 6: 6px, 8: 8px, 12: 12px, 16: 16px, 24: 24px, 32: 32px, 48: 48px);
+$radii: (6: 6px, 7: 7px, 8: 8px, 10: 10px, 12: 12px, pill: 999px);
+$type-sizes: (caption: .68rem, small: .76rem, body: .9rem, regular: 1rem, heading: 1.2rem);
+$task-control-height: 36px;
+$task-control-radius: 8px;
+$icon-size: 17px;
+$motion-menu: 180ms;
+$motion-roll: 320ms;
+$motion-star: 380ms;
+$ease-out: cubic-bezier(.22,1,.36,1);

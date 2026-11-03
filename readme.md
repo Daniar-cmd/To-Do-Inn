@@ -19,6 +19,10 @@
 
 Production-сборка frontend создаётся локально в `dist/`. Node.js, npm, Vite и Gulp на production-сервере не требуются. PHP обслуживает API, PostgreSQL — хранение данных.
 
+## Библиотека дизайна
+
+[Локальный каталог](http://localhost:5173/pages/design-system.html) — готовые элементы, иконки, состояния и анимации. [Правила использования](docs/design-system.md). Открывается при `npm run dev`; стили обновляет `npm run dev:styles`. Каталог не использует API и не входит в production-сборку.
+
 ## Локальный запуск
 
 1. Установите PHP 8.5 с `pdo_pgsql`, `mbstring`, `fileinfo`, Composer 2, PostgreSQL и Node.js 20.19+.

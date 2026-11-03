@@ -34,6 +34,32 @@ test('workspace components render safely and guard editing/deletion event handle
   try {
     const { ListCard, ListTask } = await server.ssrLoadModule('/js/workspace/Workspace.jsx');
     const { ListDatePicker } = await server.ssrLoadModule('/js/workspace/ListDatePicker.jsx');
+    const { FlagIcon } = await server.ssrLoadModule('/js/ui/icons.jsx');
+    await t.test('all flags use the task SVG and default to the surrounding text color', () => {
+      const plain = renderToStaticMarkup(React.createElement(FlagIcon));
+      const selected = renderToStaticMarkup(React.createElement(FlagIcon, { color: 'green' }));
+      assert.match(plain, /<svg class="sidebar-flag__icon"[^>]*stroke="currentColor"/);
+      assert.doesNotMatch(plain, /is-blue/);
+      assert.match(selected, /<svg class="sidebar-flag__icon is-green"/);
+      assert.match(selected, /M5 21V4m0 0c5-4 9 4 14 0v11c-5 4-9-4-14 0/);
+    });
+    await t.test('design catalog renders the shared library without an API request', async () => {
+      const { DesignSystem } = await server.ssrLoadModule('/js/design-system/DesignSystem.jsx');
+      let requests = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () => { requests++; throw new Error('Catalog must not call the API'); };
+      try {
+        const catalog = renderToStaticMarkup(React.createElement(DesignSystem));
+        assert.match(catalog, /Библиотека дизайна/);
+        assert.match(catalog, /id="colors"/);
+        assert.match(catalog, /id="motion"/);
+        assert.match(catalog, /id="copy"/);
+        assert.match(catalog, /task-create-important-button/);
+        assert.match(catalog, /list-date-picker__trigger/);
+        assert.equal(requests, 0);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+
     const deadlineTrigger = renderToStaticMarkup(React.createElement(ListDatePicker, {
       value: null, deadline: '2026-11-02', open: false, onOpenChange() {}, onChange() {}, onDeadlineChange() {}, repeat: null, onRepeatChange() {},
     }));
@@ -45,6 +71,11 @@ test('workspace components render safely and guard editing/deletion event handle
     }));
     assert.match(dateTrigger, /aria-label="Дата: 2 ноября 2026 г\."/);
     assert.match(dateTrigger, /<rect x="3" y="5" width="18" height="16"/);
+    const listPicker = renderToStaticMarkup(React.createElement(ListDatePicker, {
+      value: null, open: true, onOpenChange() {}, onChange() {},
+    }));
+    assert.doesNotMatch(listPicker, /list-date-picker__actions|list-date-picker__repeat-panel/);
+    assert.match(listPicker, /Быстрый выбор/);
     const longTitle = 'Длинная задача в несколько строк '.repeat(5) + '<script>alert(1)</script>';
     const html = renderToStaticMarkup(React.createElement(ListCard, {
       list: { id: 42, board_id: 1, name: 'List', description: 'Saved description', theme: 'blue', created_at: null },
@@ -260,7 +291,7 @@ test('workspace components render safely and guard editing/deletion event handle
       }
     });
 
-    await t.test('flag expands without collapsing extra properties, and selection keeps a compact trigger', () => {
+    await t.test('flag expands without collapsing extra properties, and selection shows the chosen flag', () => {
       const previousDocument = globalThis.document;
       const previousWindow = globalThis.window;
       globalThis.document = { body: {} };
@@ -291,7 +322,8 @@ test('workspace components render safely and guard editing/deletion event handle
             assert.match(flagButton.props.className, /is-selected/);
             assert.equal(byClass('flag-picker__panel').props.hidden, true);
             assert.equal(byClass('task-create-more-button').props['aria-expanded'], true);
-            assert.match(renderToStaticMarkup(flagButton), /<span>Флаг<\/span>/);
+            assert.match(renderToStaticMarkup(flagButton), /<svg class="sidebar-flag__icon is-green"/);
+            assert.match(renderToStaticMarkup(flagButton), /flag-picker__selected-label">A very long flag name<\/span>/);
             break;
           default: assert.fail('Unexpected extra render');
         }
@@ -306,7 +338,49 @@ test('workspace components render safely and guard editing/deletion event handle
       }
     });
 
-    await t.test('calendar sidebar keeps quick dates above repeat and deadline, and deadline selects separately', () => {
+    await t.test('pointer down expands options once and choosing a date preserves them', () => {
+      const previousDocument = globalThis.document;
+      globalThis.document = { body: {} };
+      let stage = 0;
+      function Probe() {
+        const nodes = elements(ListCard({ list: { id: 42, name: 'List' }, tasks: [], flags: [] }));
+        const more = nodes.find((node) => node.props.className?.split(' ').includes('task-create-more-button'));
+        const picker = nodes.find((node) => node.type === ListDatePicker);
+        switch (stage++) {
+          case 0:
+            nodes.find((node) => node.props['aria-label'] === 'Добавить новую задачу').props.onClick();
+            break;
+          case 1:
+            more.props.onPointerDown({ button: 0 });
+            break;
+          case 2:
+            assert.equal(more.props['aria-expanded'], true, 'options expand before pointer release');
+            more.props.onClick({ detail: 1 });
+            picker.props.onOpenChange(true);
+            break;
+          case 3:
+            assert.equal(more.props['aria-expanded'], true, 'the click and calendar must not collapse options');
+            assert.equal(picker.props.open, true);
+            picker.props.onChange('2028-06-15');
+            picker.props.onOpenChange(false);
+            break;
+          case 4:
+            assert.equal(more.props['aria-expanded'], true);
+            assert.equal(picker.props.open, false);
+            assert.equal(picker.props.value, '2028-06-15');
+            break;
+          default: assert.fail('Unexpected extra render');
+        }
+        return null;
+      }
+      try { renderToStaticMarkup(React.createElement(Probe)); assert.equal(stage, 5); }
+      finally {
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
+      }
+    });
+
+    await t.test('calendar sidebar shows only available actions, and deadline selects separately', () => {
       let dueDate = null;
       let deadline = null;
       let closedAfterSelection = false;
@@ -319,14 +393,14 @@ test('workspace components render safely and guard editing/deletion event handle
         const actions = nodes.find((node) => node.props.className === 'list-date-picker__actions');
         const repeat = nodes.find((node) => node.props.className === 'list-date-picker__repeat');
         const deadlineButton = nodes.find((node) => node.props.className === 'list-date-picker__deadline');
-        assert.deepEqual(React.Children.toArray(sidebar.props.children).map((child) => child.props.className), ['list-date-picker__repeat-panel', 'list-date-picker__heading list-date-picker__quick-heading', 'list-date-picker__quick', 'list-date-picker__actions']);
+        assert.deepEqual(React.Children.toArray(sidebar.props.children).map((child) => child.props.className), ['list-date-picker__heading list-date-picker__quick-heading', 'list-date-picker__quick', 'list-date-picker__actions']);
         assert.equal(nodes.some((node) => node.type === 'input'), false);
         assert.equal(elements(quick).filter((node) => node.type === 'button').length, 4);
-        assert.deepEqual(React.Children.toArray(actions.props.children).map((child) => child.props.className), ['list-date-picker__repeat', 'list-date-picker__deadline']);
-        assert.equal(repeat.props.disabled, true);
+        assert.deepEqual(React.Children.toArray(actions.props.children).map((child) => child.props.className), ['list-date-picker__deadline']);
+        assert.equal(repeat, undefined);
         switch (stage++) {
           case 0:
-            assert.equal(deadlineButton.props.disabled, false);
+            assert.equal(deadlineButton.props.disabled, undefined);
             deadlineButton.props.onClick();
             break;
           case 1:
@@ -406,7 +480,7 @@ test('workspace components render safely and guard editing/deletion event handle
       assert.equal(stage, 3);
     });
 
-    await t.test('urgency expands inside one dropdown, selects a level and resets when the dropdown reopens', () => {
+    await t.test('urgency editor stays with its trigger, selects a level and resets when the menu reopens', () => {
       const previousDocument = globalThis.document;
       const previousWindow = globalThis.window;
       globalThis.document = { body: {} };
@@ -434,7 +508,9 @@ test('workspace components render safely and guard editing/deletion event handle
           case 3:
             assert.match(dropdown.props.className, /is-urgency-open/);
             assert.equal(urgency.props['aria-expanded'], true);
-            assert.ok(React.Children.toArray(dropdown.props.children).some((child) => child.props.className === 'task-urgency-picker__panel'));
+            const property = elements(dropdown).find((node) => node.props.className === 'task-create-property' && React.Children.toArray(node.props.children).some((child) => child.props.className?.split(' ').includes('task-urgency-picker')));
+            assert.ok(property);
+            assert.ok(React.Children.toArray(property.props.children).some((child) => child.props.className === 'task-urgency-picker__panel'));
             assert.equal(choices.props.className, 'task-urgency-picker__panel');
             assert.equal(elements(choices).filter((node) => node.type === 'button').length, 4);
             findClass('is-level-3').props.onClick();
@@ -557,6 +633,7 @@ test('workspace components render safely and guard editing/deletion event handle
             break;
           case 2:
             assert.equal(annotation.props['aria-expanded'], false);
+            assert.ok(elements(annotation).some((node) => node.type === 'span' && node.props.children === 'Аннотация'));
             annotation.props.onClick();
             break;
           case 3:
@@ -750,11 +827,25 @@ test('compiled styles keep multiline task rows flexible and deletion dialogs abo
 test('task property buttons distinguish an open editor from a stored selection', () => {
   const css = compile(fileURLToPath(new URL('../../frontend/scss/style.scss', import.meta.url))).css;
   assert.match(css, /:is\(\.task-create-property-button, \.list-date-picker__trigger\)\.is-selected:not\(\[aria-expanded=true\]\)\s*\{[^}]*background: var\(--workspace-hover\);[^}]*box-shadow: none/);
-  assert.match(css, /:is\(\.task-create-property-button, \.list-date-picker__trigger\)\.is-selected:not\(\[aria-expanded=true\]\)::after\s*\{[^}]*position: absolute;[^}]*background: #3478d4/);
-  assert.match(css, /:is\(\.task-create-property-button, \.list-date-picker__trigger\)\[aria-expanded=true\]\s*\{[^}]*background: rgba\(52, 120, 212, 0\.13\);[^}]*box-shadow: inset/);
-  assert.match(css, /@supports \(transition-behavior: allow-discrete\)/);
-  assert.match(css, /transition: display 220ms allow-discrete/);
-  assert.match(css, /@starting-style/);
+  assert.doesNotMatch(css, /\.task-create-property-button[^{}]*::after\s*\{/);
+  assert.match(css, /:is\(\.task-create-property-button, \.list-date-picker__trigger\)\[aria-expanded=true\]\s*\{[^}]*background: rgba\(52, 120, 212, 0\.13\);[^}]*box-shadow: none/);
+  assert.doesNotMatch(css, /transition: display 220ms allow-discrete/);
+  assert.match(css, /\.task-create-dialog \.task-create-dialog__options\s*\{[^}]*animation: list-options-in 180ms ease both/);
+  assert.doesNotMatch(css, /\.task-create-important-button\s*\{[^}]*color: #a36c0e/);
+  assert.doesNotMatch(css, /\.list-date-picker__trigger\.is-selected:not\(\.has-deadline\)/);
+  assert.match(css, /\.task-create-more-button\[aria-expanded=true\] > svg\s*\{\s*transform: rotate\(45deg\);/);
+  assert.match(css, /\.task-create-more-button > svg\s*\{\s*width: 17px;\s*height: 17px;\s*transition: transform 180ms ease/);
+  assert.doesNotMatch(css, /vector-effect: non-scaling-stroke|scale\(1\.414214\)/);
+  assert.match(css, /\.list-option-button:hover,[^{}]*\.task-create-dialog \.task-create-toolbar \.list-option-button:hover\s*\{\s*border-color: var\(--workspace-border\);\s*background: var\(--workspace-hover\);\s*color: var\(--workspace-text\)/);
+  assert.doesNotMatch(css, /\.task-create-dialog \.task-create-toolbar \.list-option-button:hover\s*\{[^}]*translateY\(-1px\)/);
+  assert.match(css, /\.task-create-property > \.task-create-property-button\s*\{[^}]*animation: task-option-slide-in 320ms[^;]*backwards/);
+  assert.match(css, /@keyframes task-option-slide-in\s*\{\s*from\s*\{[^}]*translateX\(-22px\)/);
+  assert.match(css, /\.task-create-menu__main > \.task-create-property-button\s*\{\s*animation-delay: 45ms/);
+  assert.match(css, /\.task-create-property:last-child > \.task-create-property-button\s*\{\s*animation-delay: 90ms/);
+  assert.match(css, /\.task-create-important-button\[aria-pressed=true\] > svg\s*\{[^}]*animation: task-star-pop 380ms/);
+
+
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.task-create-more-button,[^{}]*\.task-create-more-button:hover\s*\{[^}]*background: #3478d4;[^}]*color: #fff/);
 });
 
 test('repeat choices reuse the quick-date sidebar and deadline has its own date color', () => {
@@ -778,7 +869,7 @@ test('mobile styles keep the header and list options compact and use vertical fu
   assert.match(css, /\.list-creator__date \.list-date-picker__panel\s*\{[^}]*left: 12px;\s*width: auto/);
   assert.match(css, /\.list-theme-picker\s*\{\s*gap: 9px/);
   assert.match(css, /\.list-focus-overlay__navigation\s*\{\s*display: none/);
-  assert.match(css, /\.list-focus-overlay\.workspace-shell,\s*\.list-focus-overlay\.workspace-shell\.is-short-list\s*\{\s*position: fixed;[\s\S]*?height: 100svh;/);
+  assert.match(css, /\.list-focus-overlay\.workspace-shell\s*\{\s*position: fixed;[\s\S]*?height: 100svh;/);
   assert.match(css, /\.list-focus-overlay__peek\s*\{[^}]*display: block;[^}]*pointer-events: auto/);
   assert.match(css, /\.list-focus-overlay__peek\.is-previous\s*\{\s*right: 28px;\s*left: 28px/);
   assert.match(css, /\.list-focus-overlay\[data-swipe=next\] \.list-focus-overlay__peek\.is-following-next[\s\S]*?display: block;\s*opacity: calc\(/);
@@ -795,6 +886,14 @@ test('mobile styles keep the header and list options compact and use vertical fu
   assert.match(css, /\.list-focus-overlay__close-mobile\s*\{\s*display: grid;\s*position: fixed/);
 });
 
+test('desktop fullscreen list keeps one stable scrolling layout', () => {
+  const css = compile(fileURLToPath(new URL('../../frontend/scss/style.scss', import.meta.url))).css;
+  const overlay = css.match(/\.list-focus-overlay\.workspace-shell\s*\{([^}]*)\}/)?.[1];
+  assert.match(overlay, /position: fixed;[^}]*inset: 0;[^}]*display: flex;[^}]*overflow-y: auto/);
+  assert.match(css, /\.list-focus-overlay__dialog\s*\{[^}]*flex: none;[^}]*margin: auto 0/);
+  assert.doesNotMatch(css, /\.list-focus-overlay\.workspace-shell\.is-short-list/);
+});
+
 test('desktop task entry opens a fullscreen composer and keeps its compact trigger buttonless', () => {
   const css = compile(fileURLToPath(new URL('../../frontend/scss/style.scss', import.meta.url))).css;
   const desktop = css.match(/\.task-create-overlay\s*\{[\s\S]*?\.task-create-error\s*\{[^}]*\}/)?.[0];
@@ -806,26 +905,24 @@ test('desktop task entry opens a fullscreen composer and keeps its compact trigg
   assert.match(desktop, /\.task-create-dialog__name-row\s*\{[^}]*min-height: 54px/);
   assert.match(desktop, /\.task-create-close\s*\{\s*display: grid;[^}]*width: 24px/);
   assert.match(desktop, /\.task-create-dialog \.list-creator__toolbar\s*\{[^}]*border-top: 1px solid var\(--workspace-border\)/);
-  assert.match(desktop, /\.task-create-dialog \.list-creator__toolbar\.is-more-open > \.task-create-menu/);
-  assert.match(desktop, /--task-menu-main-width: 200px/);
   assert.match(desktop, /\.task-create-dialog__description\s*\{[^}]*width: 80%/);
   assert.match(desktop, /\.task-create-dialog__description textarea\s*\{[^}]*min-height: 2\.8em;[^}]*max-height: 4\.4em;[^}]*resize: none/);
-  assert.match(desktop, /\.task-create-dialog \.task-create-menu__field\s*\{[^}]*border-top: 0/);
   assert.match(desktop, /\.task-create-dialog \.task-create-menu__field input,\s*\.task-create-dialog \.task-create-menu__field textarea/);
   assert.match(desktop, /\.task-create-dialog \.list-creator__toolbar > \.list-creator__more\s*\{[^}]*display: grid/);
   assert.match(desktop, /\.task-create-dialog \.task-create-more-button\s*\{[^}]*background: #3478d4;[^}]*color: #fff/);
-  assert.match(desktop, /\.task-create-dialog \.list-creator__toolbar\.is-more-open > \.task-create-menu\s*\{[^}]*position: absolute;[^}]*left: 44px;[^}]*border-radius: 10px/);
-  assert.match(desktop, /\.task-create-menu\.is-urgency-open\s*\{[^}]*grid-template-columns: var\(--task-menu-main-width\) var\(--task-menu-urgency-width\)/);
-  assert.match(desktop, /\.task-create-dialog \.task-create-menu__field\s*\{[^}]*animation: task-create-field-in 160ms ease both/);
-  assert.match(desktop, /\.task-create-dialog \.task-create-menu__main > \.list-option-button\s*\{[^}]*width: 100%;[^}]*height: 34px;[^}]*border: 0/);
-  assert.match(desktop, /\.task-create-dialog \.task-create-menu__icon\s*\{[^}]*width: 26px;[^}]*place-items: center/);
   const urgencyPanel = desktop.match(/\.task-create-dialog \.task-urgency-picker__panel\s*\{([^}]*)\}/)?.[1];
   assert.match(urgencyPanel, /display: grid;[^}]*border-left: 1px solid var\(--workspace-border\)/);
   assert.doesNotMatch(urgencyPanel, /^\s*(?:position|box-shadow|border-radius|top|left):/m);
+  // The + toolbar wraps in normal flow, while desktop editors float below their trigger.
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar\s*\{[^}]*flex-wrap: wrap/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar\.is-more-open > \.task-create-menu,[^{}]*\{\s*display: contents/);
+  assert.match(css, /@media \(min-width: 701px\)\s*\{\s*\.task-create-dialog \.task-create-toolbar \.task-create-property > :is\(\.task-urgency-picker__panel, \.task-create-menu__field\)\s*\{[^}]*position: absolute;[^}]*width: 240px;[^}]*box-shadow:/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.task-urgency-picker > \.task-urgency-picker__mark\s*\{[^}]*width: auto;[^}]*min-width: 7px/);
   assert.doesNotMatch(desktop, /Дедлайн/);
   assert.match(css, /@media \(min-width: 701px\)\s*\{\s*\.list-date-picker__panel\s*\{[^}]*grid-template-columns: minmax\(0, 248px\) minmax\(0, 1fr\)/);
   assert.match(css, /\.list-date-picker__quick span,\s*\.list-date-picker__quick small\s*\{[^}]*white-space: nowrap/);
-  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.list-date-picker__panel\s*\{[^}]*left: 0;[^}]*width: min\(500px, 100%\)/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.flag-picker__panel,\s*\.task-create-dialog \.task-create-toolbar \.list-date-picker__panel\s*\{[^}]*position: absolute;[^}]*right: auto;[^}]*left: 0;[^}]*width: 240px/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.list-date-picker__panel\s*\{[^}]*width: min\(500px, 100vw - 32px\)/);
   assert.match(css, /\.list-date-picker__actions\s*\{[^}]*display: grid;[^}]*gap: 6px/);
   assert.match(css, /\.list-date-picker__quick\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(desktop, /\.task-create-dialog__input-wrap > input\s*\{[^}]*font-size: 0\.96rem/);
@@ -852,18 +949,18 @@ test('mobile task composer properties fit inside both list modes', () => {
   assert.match(css, /\.task-create-overlay:not\(\.is-inline\)\s*\{[^}]*place-items: center/);
   assert.match(css, /\.task-create-dialog \.task-create-dialog__name-row\s*\{[^}]*display: flex;[^}]*gap: 8px/);
   assert.match(css, /\.task-create-dialog \.task-create-dialog__submit\s*\{\s*display: none/);
-  assert.match(css, /\.task-create-dialog \.task-create-toolbar\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*gap: 6px/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*gap: 8px/);
   assert.match(css, /\.task-create-dialog \.task-create-menu__main\s*\{[^}]*display: contents/);
-  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.list-option-button\s*\{[^}]*width: auto;[^}]*height: 38px;[^}]*flex: 0 0 auto;[^}]*padding: 0 8px/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar \.list-option-button\s*\{[^}]*width: auto;[^}]*height: 36px;[^}]*flex: 0 0 auto;[^}]*padding: 0 9px/);
   assert.match(css, /\.task-create-dialog \.task-urgency-picker__panel\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   const panels = css.match(/\.task-create-dialog \.task-create-toolbar \.flag-picker__panel,[\s\S]*?\.task-create-dialog \.task-create-toolbar \.list-date-picker__panel\s*\{([^}]*)\}/)?.[1];
   assert.match(panels, /position: static;[^}]*order: 10;[^}]*width: 100%;[^}]*flex: 0 0 100%/);
   assert.doesNotMatch(panels, /position: absolute/);
   assert.match(css, /\.task-create-dialog \.task-create-dialog__description\s*\{[^}]*flex: none;[^}]*padding: 0 0 10px/);
   assert.doesNotMatch(css, /\.task-create-dialog__description\s*\{[^}]*order:/);
-  assert.match(css, /\.task-create-dialog \.task-create-menu__main > \.task-urgency-picker\[aria-expanded=true\]\s*\{[^}]*border-color: #3478d4;[^}]*box-shadow/);
-  assert.match(css, /\.task-create-dialog \.task-create-toolbar > \.list-option-button:is\(\[aria-expanded=true\], \.is-selected\)\s*\{[^}]*border-color: #3478d4/);
+  assert.match(css, /\.task-create-dialog \.task-create-property\s*\{[^}]*display: contents/);
+  assert.match(css, /\.task-create-dialog \.task-create-toolbar > \.list-option-button\[aria-pressed=true\]\s*\{[^}]*border-color: #d8ad45;[^}]*background: #fff5d6/);
   assert.match(css, /\.task-create-dialog \.flag-picker__choice\.is-selected::after\s*\{/);
   assert.match(css, /\.task-create-overlay:not\(\.is-inline\) \.task-create-dialog:has\(\.list-date-picker\.is-open\)\s*\{[^}]*height: calc\(100dvh - 24px/);
-  assert.match(css, /\.task-create-dialog:has\(\.list-date-picker\.is-open\) \.list-date-picker__panel\s*\{[^}]*grid-column: 1\/-1/);
+  assert.doesNotMatch(css, /\.task-create-dialog:has\(\.list-date-picker\.is-open\) \.task-create-toolbar\s*\{[^}]*display: grid/);
 });

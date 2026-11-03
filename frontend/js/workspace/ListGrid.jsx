@@ -24,7 +24,6 @@ export function ListGrid({ lists, onSwap, children }) {
   const mobileCloseButton = useRef(null);
   const overlayRef = useRef(null);
   const dialogRef = useRef(null);
-  const [shortFocusedList, setShortFocusedList] = useState(false);
   const slideTimer = useRef(null);
   const swipeResetTimer = useRef(null);
   const touchStart = useRef(null);
@@ -137,24 +136,6 @@ export function ListGrid({ lists, onSwap, children }) {
   }, [orderKey, focusedId]);
 
   useLayoutEffect(() => {
-    if (focusedId === null) {
-      setShortFocusedList(false);
-      return undefined;
-    }
-    const dialog = dialogRef.current;
-    if (!dialog) return undefined;
-    const measure = () => setShortFocusedList(dialog.scrollHeight <= window.innerHeight * 0.88);
-    measure();
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    observer?.observe(dialog);
-    window.addEventListener('resize', measure);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [focusedId]);
-
-  useLayoutEffect(() => {
     if (!isFocusOpen || !window.matchMedia('(max-width: 700px)').matches) return undefined;
     const body = document.body;
     const previous = {
@@ -200,13 +181,6 @@ export function ListGrid({ lists, onSwap, children }) {
       viewport.removeEventListener('scroll', updateViewport);
     };
   }, [isFocusOpen]);
-
-  useEffect(() => {
-    if (!isFocusOpen || !shortFocusedList || window.matchMedia('(max-width: 700px)').matches) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = previousOverflow; };
-  }, [isFocusOpen, shortFocusedList]);
 
   useEffect(() => () => {
     window.clearTimeout(slideTimer.current);
@@ -619,7 +593,7 @@ export function ListGrid({ lists, onSwap, children }) {
         })}
       </div>)}
     </div>
-    {focusedList && createPortal(<div ref={overlayRef} className={`workspace-shell list-focus-overlay${shortFocusedList ? ' is-short-list' : ''}`} style={shortFocusedList || window.matchMedia('(max-width: 700px)').matches ? undefined : { top: `${focusScrollTop.current}px` }} data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
+    {focusedList && createPortal(<div ref={overlayRef} className="workspace-shell list-focus-overlay" data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
       <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр списка" onClick={() => setFocusedId(null)} />
       {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(previousList)}</div></div>}
       {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(nextList)}</div></div>}

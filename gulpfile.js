@@ -2,13 +2,13 @@ const { src, dest, watch, series } = require('gulp');
 const sass = require('gulp-sass')(require('sass'));
 
 function styles() {
-  return src('frontend/scss/style.scss')
+  return src(['frontend/scss/style.scss', 'frontend/scss/design-system.scss'])
     .pipe(sass().on('error', sass.logError))
     .pipe(dest('frontend/css'));
 }
 
 function buildStyles() {
-  return src('frontend/scss/style.scss')
+  return src(['frontend/scss/style.scss', 'frontend/scss/design-system.scss'])
     .pipe(sass({ style: 'compressed' }).on('error', sass.logError))
     .pipe(dest('frontend/css'));
 }

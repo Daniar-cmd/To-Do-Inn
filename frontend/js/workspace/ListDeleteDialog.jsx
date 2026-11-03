@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { uiText } from '../ui/text.js';
 
 // Keep fixed dialogs outside cards: card transforms otherwise change their containing block.
-export function ListDeleteDialog({ id, title, children, error, busy, busyLabel = 'Удаляем…', confirmLabel, onClose, onConfirm, theme }) {
+export function ListDeleteDialog({ id, title, children, error, busy, busyLabel = uiText.feedback.deleting, confirmLabel, onClose, onConfirm, theme }) {
   const dialogRef = useRef(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -38,7 +39,7 @@ export function ListDeleteDialog({ id, title, children, error, busy, busyLabel =
       <p>{children}</p>
       {error && <p className="list-delete-dialog__error" role="alert">{error}</p>}
       <div className="list-delete-dialog__actions">
-        <button type="button" onClick={onClose} disabled={busy}>Отмена</button>
+        <button type="button" onClick={onClose} disabled={busy}>{uiText.actions.cancel}</button>
         <button type="button" onClick={onConfirm} disabled={busy}>{busy ? busyLabel : confirmLabel}</button>
       </div>
     </section>

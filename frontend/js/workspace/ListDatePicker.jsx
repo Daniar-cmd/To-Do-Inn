@@ -60,19 +60,19 @@ export function ListDatePicker({ value, open, onOpenChange, onChange, deadline, 
      </button>
      <div className="list-date-picker__panel" hidden={!open}>
        <div className="list-date-picker__sidebar">
-        <div className="list-date-picker__repeat-panel" hidden={!repeatOpen} role="group" aria-label="Частота повторения">
+        {onRepeatChange && <div className="list-date-picker__repeat-panel" hidden={!repeatOpen} role="group" aria-label="Частота повторения">
         <p className="list-date-picker__heading">Повторять</p>
         {repeatOptions.map(([interval, text]) => <button key={interval} type="button" className={repeat === interval ? 'is-selected' : ''} aria-pressed={repeat === interval} onClick={() => { repeatButtonRef.current?.focus(); onRepeatChange(interval); setRepeatOpen(false); }}>{text}</button>)}
         <button type="button" className="list-date-picker__repeat-clear" disabled={!repeat} onClick={() => { repeatButtonRef.current?.focus(); onRepeatChange(null); setRepeatOpen(false); }}>Без повторения</button>
-        </div>
+        </div>}
         <p className="list-date-picker__heading list-date-picker__quick-heading" hidden={repeatOpen}>Быстрый выбор</p>
         <div className="list-date-picker__quick" hidden={repeatOpen}>
           {quickDates(today).map(([label, date]) => <button key={label} type="button" className={activeDate === date ? 'is-selected' : ''} aria-pressed={activeDate === date} onClick={() => chooseDate(date)}><span>{label}</span><small>{quickDateHint(date, label !== 'Через неделю', true)}</small></button>)}
         </div>
-        <div className="list-date-picker__actions">
-          <button ref={repeatButtonRef} className="list-date-picker__repeat" type="button" disabled={!onRepeatChange} aria-expanded={repeatOpen} aria-label="Повторять" title={onRepeatChange ? 'Выбрать повторение' : 'Повторение доступно для задач'} onClick={() => { setRepeatOpen((current) => !current); setSelectingDeadline(false); }}>Повторять <span aria-hidden="true">{repeat ? repeatOptions.find(([interval]) => interval === repeat)?.[1] : '‹'}</span></button>
-          <button className="list-date-picker__deadline" type="button" disabled={!onDeadlineChange} aria-pressed={selectingDeadline} title={onDeadlineChange ? 'Выбрать дату дедлайна' : 'Дедлайн доступен для задач'} onClick={() => { setSelectingDeadline((current) => !current); setRepeatOpen(false); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M12 22c4.5 0 7-3 7-7 0-3-1.5-5-4-7 .3 2-1 3.3-2 4-1-3-.5-5.5-2.5-9C9 6 5 9 5 15c0 4 2.5 7 7 7Z"/><path d="M12 22c2.3 0 3.5-1.4 3.5-3.4 0-1.8-1-3-2.5-4.6-.2 1.4-1.1 2.2-2.1 2.8-.4-.8-.5-1.5-.4-2.3-1.4 1.7-2 3-2 4 0 2 1.2 3.1 3.5 3.1Z"/></svg><span>Дедлайн</span><span className="list-date-picker__deadline-value">{deadline ? selectedFormat.format(new Date(`${deadline}T12:00:00`)) : '›'}</span></button>
-        </div>
+        {(onRepeatChange || onDeadlineChange) && <div className="list-date-picker__actions">
+          {onRepeatChange && <button ref={repeatButtonRef} className="list-date-picker__repeat" type="button" aria-expanded={repeatOpen} aria-label="Повторять" title="Выбрать повторение" onClick={() => { setRepeatOpen((current) => !current); setSelectingDeadline(false); }}>Повторять <span aria-hidden="true">{repeat ? repeatOptions.find(([interval]) => interval === repeat)?.[1] : '‹'}</span></button>}
+          {onDeadlineChange && <button className="list-date-picker__deadline" type="button" aria-pressed={selectingDeadline} title="Выбрать дату дедлайна" onClick={() => { setSelectingDeadline((current) => !current); setRepeatOpen(false); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M12 22c4.5 0 7-3 7-7 0-3-1.5-5-4-7 .3 2-1 3.3-2 4-1-3-.5-5.5-2.5-9C9 6 5 9 5 15c0 4 2.5 7 7 7Z"/><path d="M12 22c2.3 0 3.5-1.4 3.5-3.4 0-1.8-1-3-2.5-4.6-.2 1.4-1.1 2.2-2.1 2.8-.4-.8-.5-1.5-.4-2.3-1.4 1.7-2 3-2 4 0 2 1.2 3.1 3.5 3.1Z"/></svg><span>Дедлайн</span><span className="list-date-picker__deadline-value">{deadline ? selectedFormat.format(new Date(`${deadline}T12:00:00`)) : '›'}</span></button>}
+        </div>}
       </div>
       <div className="list-date-picker__calendar">
         <p className="list-date-picker__heading" role="status">{selectingDeadline ? 'Выберите дедлайн' : 'Выберите дату'}</p>

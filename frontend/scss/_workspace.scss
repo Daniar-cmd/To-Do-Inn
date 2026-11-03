@@ -7,12 +7,9 @@
 }
 
 .workspace-shell {
-  --workspace-bg: #f4f7fb;
-  --workspace-surface: #ffffff;
-  --workspace-text: #15243d;
-  --workspace-muted: #68778d;
-  --workspace-border: #e1e7ef;
-  --workspace-hover: #f0f4f9;
+  @each $name, $value in v.$workspace-light {
+    --workspace-#{$name}: #{$value};
+  }
   display: flex;
   min-height: 100vh;
   min-height: 100svh;
@@ -21,12 +18,9 @@
   color: var(--workspace-text);
 
   &[data-theme='dark'] {
-    --workspace-bg: #111b2b;
-    --workspace-surface: #182438;
-    --workspace-text: #e8eef8;
-    --workspace-muted: #9eacc0;
-    --workspace-border: #2a3950;
-    --workspace-hover: #223149;
+    @each $name, $value in v.$workspace-dark {
+      --workspace-#{$name}: #{$value};
+    }
   }
 }
 
@@ -51,9 +45,31 @@
 
   &__left {
     display: flex;
+    min-width: 0;
     align-items: center;
     gap: 16px;
   }
+}
+
+.workspace-holiday-ribbon {
+  position: relative;
+  display: block;
+  width: calc(100% + 32px);
+  height: 58px;
+  flex: 1 1 auto;
+  margin-left: -32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 3px 3px rgb(10 25 45 / 18%));
+  transition: filter 180ms ease, transform 180ms ease;
+
+  svg { display: block; width: 100%; height: 100%; }
+
+  &:hover, &:focus-visible { filter: drop-shadow(0 5px 5px rgb(10 25 45 / 24%)); transform: translateY(-2px); }
+  &:focus-visible { outline: 3px solid #3478d4; outline-offset: 3px; }
+  &.is-playing { filter: drop-shadow(0 5px 6px rgb(0 57 166 / 28%)); }
 }
 
 .sidebar-toggle {
@@ -634,6 +650,7 @@
   flex: none;
   font-size: 1rem;
 }
+.sidebar-flag__icon { display: block; width: 17px; height: 17px; }
 
 .is-blue { color: #3478d4; }
 .is-violet { color: #8b5cc7; }
@@ -813,7 +830,7 @@
   &__section-count { color: var(--workspace-muted); font-size: .68rem; font-weight: 500; letter-spacing: 0; }
     &__tasks { display: block; min-width: 0; margin: 0; padding: 0; list-style: none; li { display: flow-root; min-width: 0; min-height: 44px; border-bottom: 1px solid var(--workspace-border); transition: background-color 120ms ease; } li:last-child { border-bottom: 0; } &.has-no-completed { margin-bottom: 8px; li:last-child { padding-bottom: 14px; } } li.is-drop-target { border-top: 2px solid var(--card-accent); background: var(--workspace-hover); } li.is-dragging { opacity: .45; } }
   &__task { position: relative; display: flex; min-height: 44px; align-items: center; gap: 12px; padding: 8px 2px; color: var(--workspace-text); font-size: .89rem; line-height: 1.45; }
-  &__task-important { position: absolute; top: 50%; left: -14px; display: grid; width: 12px; height: 14px; place-items: center; color: #bd810d; pointer-events: none; transform: translateY(-50%); svg { width: 12px; height: 12px; } }
+  &__task-important { position: absolute; top: 50%; left: -14px; display: grid; width: 12px; height: 14px; place-items: center; color: #bd810d; pointer-events: none; transform: translateY(-50%); svg { width: 12px; height: 12px; fill: currentColor; } }
   &__task-control { position: relative; display: grid; width: 25px; height: 25px; flex: none; place-items: center; cursor: pointer; }
   &__task-control input { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
   &__task-mark { display: grid; width: 23px; height: 23px; place-items: center; border: 1.5px solid var(--workspace-muted); border-radius: 50%; background: transparent; color: transparent; transition: background-color 150ms ease, border-color 150ms ease; svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; } }
@@ -974,57 +991,12 @@
   .task-create-dialog .task-create-more-button[aria-expanded='true'] { border-color: #245da8; background: #245da8; color: #fff; }
   .task-create-dialog .task-create-more-button:focus-visible { outline: 2px solid #3478d4; outline-offset: 3px; }
   .task-create-dialog .list-creator__toolbar > .list-creator__extra-row { display: none; }
-  .task-create-dialog .list-creator__toolbar.is-more-open > .task-create-menu {
-    --task-menu-main-width: 200px;
-    --task-menu-urgency-width: 220px;
-    position: absolute;
-    z-index: 30;
-    top: calc(100% + 8px);
-    left: 44px;
-    display: grid;
-    box-sizing: content-box;
-    grid-template-columns: var(--task-menu-main-width);
-    width: var(--task-menu-main-width);
-    border: 1px solid var(--workspace-border);
-    border-radius: 10px;
-    background: var(--workspace-surface);
-    box-shadow: 0 12px 28px rgb(13 27 48 / 15%);
-    animation: list-options-in 160ms ease both;
-  }
-  .task-create-dialog .list-creator__toolbar.is-more-open > .task-create-menu.is-urgency-open {
-    grid-template-columns: var(--task-menu-main-width) var(--task-menu-urgency-width);
-    width: calc(var(--task-menu-main-width) + var(--task-menu-urgency-width));
-  }
-  .task-create-dialog .task-create-menu__main { display: grid; align-content: start; min-width: 0; gap: 2px; padding: 8px; }
-  .task-create-dialog .task-create-menu__main > .list-option-button { width: 100%; height: 34px; min-height: 34px; justify-content: flex-start; gap: 7px; padding-inline: 8px; border: 0; border-radius: 6px; background: transparent; }
-  .task-create-dialog .task-create-menu__icon { display: grid; width: 26px; height: 26px; flex: none; place-items: center; }
-  .task-create-dialog .task-create-menu__icon svg { width: 17px; height: 17px; }
-  .task-create-dialog .task-create-menu__main > .task-urgency-picker > .task-urgency-picker__mark { display: grid; width: 26px; min-width: 26px; height: 26px; flex: none; place-items: center; }
   .task-create-dialog .task-create-menu__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .task-create-dialog .task-create-menu__main > .list-option-button:hover,
-  .task-create-dialog .task-create-menu__main > .list-option-button:active { transform: none; box-shadow: none; }
-  .task-create-dialog .task-create-menu__main > .list-option-button:hover,
-  .task-create-dialog .task-create-menu__main > .list-option-button.is-open { background: var(--workspace-hover); color: var(--workspace-text); }
-   .task-create-dialog .task-create-menu__main > .list-option-button[aria-expanded='true'] { border-color: rgb(52 120 212 / 38%); background: rgb(52 120 212 / 9%); color: #3478d4; }
-   .task-create-dialog .task-create-menu__main > .task-urgency-picker[aria-expanded='true'] { border-color: #3478d4; background: rgb(52 120 212 / 9%); color: #3478d4; box-shadow: 0 0 0 2px rgb(52 120 212 / 10%); }
-  .task-create-dialog .task-create-menu__toggle.is-open { border-radius: 6px; }
-  .task-create-dialog .task-create-menu__icon { position: relative; border-radius: 6px; transition: background-color 140ms ease, color 140ms ease; }
-  .task-create-dialog .task-create-menu__toggle[aria-expanded='true'] .task-create-menu__icon,
-  .task-create-dialog .task-create-menu__toggle.is-selected .task-create-menu__icon { background: rgb(52 120 212 / 12%); color: #3478d4; }
-  .task-create-dialog .task-create-menu__toggle.is-selected:not([aria-expanded='true']) .task-create-menu__icon::after { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border: 1px solid var(--workspace-surface); border-radius: 50%; background: #3478d4; content: ''; }
-  .task-create-dialog .task-create-menu__chevron { width: 14px; height: 14px; margin-left: auto; transition: transform 160ms ease; }
-  .task-create-dialog .task-create-menu__toggle.is-open .task-create-menu__chevron { transform: rotate(90deg); }
-  .task-create-dialog .task-create-menu__field { display: grid; min-width: 0; margin-top: -2px; padding: 8px; border: 1px solid var(--workspace-border); border-top: 0; border-radius: 0 0 6px 6px; background: var(--workspace-bg); animation: task-create-field-in 160ms ease both; }
+  .task-create-dialog .task-create-menu__field { display: grid; min-width: 0; }
   .task-create-dialog .task-create-menu__field input,
   .task-create-dialog .task-create-menu__field textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--workspace-border); border-radius: 6px; outline-color: #3478d4; background: var(--workspace-surface); color: var(--workspace-text); font: inherit; font-size: .82rem; }
   .task-create-dialog .task-create-menu__field input::placeholder,
   .task-create-dialog .task-create-menu__field textarea::placeholder { color: var(--workspace-muted); }
-  .task-create-dialog .list-creator__extra-row .list-creator__date { position: relative; z-index: 24; }
-  .task-create-dialog .list-creator__extra-row .list-date-picker { position: relative; }
-  .task-create-dialog .list-creator__extra-row .list-date-picker__panel { top: calc(100% + 8px); right: auto; left: 0; }
-  .task-create-dialog .list-creator__extra-row .task-create-dialog__location { position: relative; z-index: 25; }
-  .task-create-dialog .list-creator__extra-row .task-create-dialog__location-panel { top: calc(100% + 8px); }
-  .task-create-dialog .task-urgency-picker__chevron { width: 14px; height: 14px; margin-left: auto; }
   .task-create-dialog .task-urgency-picker__mark { min-width: 27px; font-weight: 800; letter-spacing: .02em; text-align: center; }
   .task-create-dialog .task-urgency-picker__panel { display: grid; align-content: start; min-width: 0; gap: 2px; padding: 8px; border-left: 1px solid var(--workspace-border); }
   .task-create-dialog .task-urgency-picker__choice { min-height: 34px; gap: 9px; font-size: .8rem; }
@@ -1043,58 +1015,184 @@
   .task-create-error { position: fixed; top: calc(20vh + 120px); width: min(calc(100% - 64px), 820px); margin: 0; color: #d36b6b; font-size: .9rem; }
 .task-create-dialog__mobile-title { display: none; }
 
+// One hover appearance for list creation and task creation.
+.list-option-button:hover,
+.list-option-button.is-selected,
+[aria-pressed='true'] .list-option-button,
+.task-create-dialog .task-create-toolbar .list-option-button:hover {
+  border-color: var(--workspace-border);
+  background: var(--workspace-hover);
+  color: var(--workspace-text);
+}
+
+// Share the mobile toolbar on every screen: extra properties expand to the right
+// and wrap naturally. Mobile property editors occupy a full row.
+.task-create-dialog .task-create-toolbar {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 0 0;
+}
+.task-create-dialog .task-create-toolbar > .flag-picker,
+.task-create-dialog .task-create-toolbar > .list-creator__date,
+.task-create-dialog .task-create-toolbar .list-date-picker,
+.task-create-dialog .task-create-toolbar.is-more-open > .task-create-menu,
+.task-create-dialog .task-create-menu__main { display: contents; }
+.task-create-dialog .task-create-toolbar .list-option-button {
+  display: flex;
+  width: auto;
+  min-width: 36px;
+  max-width: 100%;
+  height: v.$task-control-height;
+  min-height: v.$task-control-height;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--workspace-border);
+  border-radius: v.$task-control-radius;
+  background: var(--workspace-surface);
+  color: var(--workspace-muted);
+  font-size: .76rem;
+  line-height: 1.3;
+  text-align: left;
+  justify-self: start;
+  transform: none;
+  box-shadow: none;
+}
+.task-create-dialog .task-create-toolbar > .list-option-button { width: 36px; justify-content: center; }
+.task-create-dialog .task-create-toolbar > .list-creator__more { margin-left: 0; }
+.task-create-dialog .task-create-toolbar.is-more-open { margin: 0; }
+.task-create-dialog .task-create-toolbar .task-create-more-button,
+.task-create-dialog .task-create-toolbar .task-create-more-button:hover { border-color: #3478d4; background: #3478d4; color: #fff; }
+.task-create-dialog .task-create-toolbar > .list-option-button[aria-pressed='true'] { border-color: v.$important-border; background: v.$important-background; color: v.$important-text; }
+.task-create-dialog .task-create-toolbar > .list-option-button[aria-pressed='true'] svg { fill: currentColor; }
+.task-create-dialog .task-create-toolbar .list-option-button.has-deadline { border-color: #b65d56; background: rgb(182 93 86 / 12%); color: #a9534d; }
+.task-create-dialog .task-create-toolbar .sidebar-flag__icon,
+.task-create-dialog .task-create-menu__icon { display: grid; width: 17px; min-width: 17px; height: 17px; flex: 0 0 17px; place-items: center; }
+.task-create-dialog .task-create-toolbar .flag-picker__selected-label { min-width: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-create-dialog .task-create-menu__icon svg { width: 17px; height: 17px; }
+.task-create-dialog .task-create-menu__chevron,
+.task-create-dialog .task-urgency-picker__chevron { display: none; }
+.task-create-dialog .task-create-menu__label { max-width: 100%; font-size: inherit; text-align: left; }
+.task-create-dialog .task-create-toolbar .flag-picker__panel,
+.task-create-dialog .task-create-toolbar .task-urgency-picker__panel,
+.task-create-dialog .task-create-toolbar .task-create-menu__field,
+.task-create-dialog .task-create-toolbar .list-date-picker__panel {
+  position: static;
+  order: 10;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  flex: 0 0 100%;
+  margin: 4px 0 0;
+  padding: 10px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 9px;
+  background: var(--workspace-bg);
+  overflow: visible;
+  box-shadow: none;
+  animation: list-options-in 180ms ease both;
+}
+.task-create-dialog .task-urgency-picker__panel { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+
 .task-create-dialog .task-create-menu__main > .list-option-button,
 .task-create-dialog .flag-picker > .list-option-button,
 .task-create-dialog .list-date-picker__trigger { padding-inline: 8px; }
+.task-create-dialog .task-create-toolbar .task-create-property-button > svg.sidebar-flag__icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  transform: translateX(-1px);
+}
 .task-create-dialog .flag-picker.is-open { z-index: 40; }
 
-// An open editor and a stored property are different states. Icon-only controls
-// (the important star and +) deliberately keep their existing styles and logic.
-.task-create-dialog .task-create-toolbar :is(.task-create-property-button, .list-date-picker__trigger) { position: relative; }
+// Stored values use a tinted button, without extra corner indicators.
 .task-create-dialog .task-create-toolbar :is(.task-create-property-button, .list-date-picker__trigger).is-selected:not([aria-expanded='true']) {
   border-color: var(--workspace-border);
   background: var(--workspace-hover);
   color: var(--workspace-text);
   box-shadow: none;
 }
-.task-create-dialog .task-create-toolbar :is(.task-create-property-button, .list-date-picker__trigger).is-selected:not([aria-expanded='true'])::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 5px;
-  height: 5px;
-  flex: none;
-  border-radius: 50%;
-  background: #3478d4;
-}
 .task-create-dialog .task-create-toolbar .list-date-picker__trigger.has-deadline:not([aria-expanded='true']) { border-color: #b65d56; background: rgb(182 93 86 / 9%); color: #a9534d; }
-.task-create-dialog .task-create-toolbar .list-date-picker__trigger.has-deadline:not([aria-expanded='true'])::after { background: #b65d56; }
 .task-create-dialog .task-create-toolbar :is(.task-create-property-button, .list-date-picker__trigger)[aria-expanded='true'] {
   border-color: #3478d4;
   background: rgb(52 120 212 / 13%);
   color: #3478d4;
-  box-shadow: inset 0 0 0 1px rgb(52 120 212 / 18%);
+  box-shadow: none;
 }
-.task-create-dialog .task-create-menu__toggle.is-selected:not([aria-expanded='true']) .task-create-menu__icon::after { display: none; }
 
-// Keep the closing menu painted until the reverse slide finishes, without
-// changing the toggle state or allowing clicks on its departing controls.
-@supports (transition-behavior: allow-discrete) {
-  .task-create-dialog .task-create-toolbar > .task-create-menu { transition: display 220ms allow-discrete; }
-  .task-create-dialog .task-create-toolbar .task-create-menu__main > .task-create-property-button {
-    opacity: 0;
-    transform: translateX(-12px);
-    transition: opacity 160ms ease, transform 200ms cubic-bezier(.2,.8,.2,1);
+// Reuse the list creator's icon size, rotation and option appearance.
+.task-create-dialog .task-create-toolbar .task-create-more-button > svg {
+  width: 17px;
+  height: 17px;
+  transition: transform v.$motion-menu ease;
+}
+.task-create-dialog .task-create-toolbar .task-create-more-button[aria-expanded='true'] > svg { transform: rotate(45deg); }
+.task-create-dialog .task-create-dialog__options { animation: list-options-in 180ms ease both; }
+.task-create-dialog .task-create-menu__main > .task-create-property-button,
+.task-create-dialog .task-create-property > .task-create-property-button { animation: task-option-slide-in v.$motion-roll v.$ease-out backwards; }
+.task-create-dialog .task-create-menu__main > .task-create-property-button { animation-delay: 45ms; }
+.task-create-dialog .task-create-menu__main > .task-create-property:last-child > .task-create-property-button { animation-delay: 90ms; }
+.task-create-dialog .task-create-toolbar .task-create-important-button > svg {
+  fill: transparent;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill 180ms ease, color 180ms ease;
+}
+.task-create-dialog .task-create-toolbar .task-create-important-button[aria-pressed='true'] > svg {
+  fill: currentColor;
+  animation: task-star-pop v.$motion-star v.$ease-out backwards;
+}
+@keyframes task-option-slide-in {
+  from { opacity: 0; transform: translateX(-22px); }
+  75% { opacity: 1; transform: translateX(2px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes task-star-pop {
+  from { transform: scale(.78) rotate(-16deg); }
+  45% { transform: scale(1.22) rotate(10deg); }
+  75% { transform: scale(.96) rotate(-3deg); }
+  to { transform: scale(1) rotate(0); }
+}
+.task-create-dialog .task-create-toolbar .task-urgency-picker > .task-urgency-picker__mark { width: auto; min-width: 7px; height: 17px; flex: none; line-height: 17px; letter-spacing: 0; }
+.task-create-dialog .task-create-toolbar .sidebar-flag__icon { display: block; }
+.task-create-dialog .task-create-property { position: relative; min-width: 0; max-width: 100%; flex: 0 0 auto; }
+
+@media (min-width: 701px) {
+  .task-create-dialog .task-create-toolbar .task-create-property > :is(.task-urgency-picker__panel, .task-create-menu__field) {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 8px);
+    left: 0;
+    width: 240px;
+    max-width: calc(100vw - 48px);
+    margin: 0;
+    background: var(--workspace-surface);
+    box-shadow: 0 12px 28px rgb(13 27 48 / 15%);
+    animation: list-options-in 160ms ease both;
   }
-  .task-create-dialog .task-create-toolbar.is-more-open .task-create-menu__main > .task-create-property-button { opacity: 1; transform: translateX(0); }
-  @starting-style {
-    .task-create-dialog .task-create-toolbar.is-more-open .task-create-menu__main > .task-create-property-button { opacity: 0; transform: translateX(-12px); }
-  }
+  .task-create-dialog .task-create-toolbar .task-create-property > .task-urgency-picker__panel { width: 220px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .task-create-dialog .task-create-toolbar > .task-create-menu,
-  .task-create-dialog .task-create-toolbar .task-create-menu__main > .task-create-property-button { animation: none; transition: none; opacity: 1; transform: none; }
+  .task-create-dialog .task-create-toolbar .task-create-important-button > svg,
+  .task-create-dialog .task-create-toolbar .task-create-important-button[aria-pressed='true'] > svg,
+  .task-create-dialog .task-create-toolbar .task-create-menu__main > .task-create-property-button,
+  .task-create-dialog .task-create-toolbar .task-create-property > .task-create-property-button,
+  .task-create-dialog .task-create-menu__main > .task-create-property:last-child > .task-create-property-button,
+  .task-create-dialog .task-create-toolbar .list-option-button,
+  .task-create-dialog .task-create-toolbar .task-create-more-button > svg,
+  .task-create-dialog .task-create-dialog__options,
+  .task-create-dialog .task-create-toolbar .task-create-property > :is(.task-urgency-picker__panel, .task-create-menu__field) { animation: none; transition: none; }
 }
 
 .task-list-card__composer-anchor.is-expanded > .task-list-card__add { display: none; }
@@ -1118,8 +1216,6 @@
 @keyframes task-create-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes task-create-dialog-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes task-create-field-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes task-option-slide-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes task-options-panel-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 
 @keyframes task-title-strike {
   from { text-decoration-color: transparent; }
@@ -1150,17 +1246,17 @@
 @keyframes list-focus-peek-in { from { opacity: 0; transform: translateY(-50%) scale(.9); } to { opacity: .65; transform: translateY(-50%) scale(.94); } }
 
 .list-focus-overlay.workspace-shell {
-  position: absolute;
+  position: fixed;
   z-index: 1300;
-  right: 0;
-  left: 0;
-  display: block;
-  min-height: 100vh;
-  overflow: visible;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  overflow-y: auto;
+  padding: max(7dvh, 56px) 0 42px;
   background: transparent;
 }
-
-.list-focus-overlay.workspace-shell.is-short-list { position: fixed; inset: 0; display: grid; min-height: 100vh; place-items: center; overflow: visible; }
 
 .list-focus-overlay {
   &__backdrop { position: fixed; z-index: 0; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: rgb(8 14 24 / 66%); backdrop-filter: blur(3px); cursor: default; animation: list-focus-backdrop-in 220ms ease both; }
@@ -1169,8 +1265,7 @@
   &__peek.is-next { right: -220px; }
   &__peek.is-following-next, &__peek.is-following-previous { display: none; }
   &__peek > .task-list-card { min-height: 240px; max-height: 60dvh; overflow: hidden; padding-bottom: 22px; box-shadow: 0 18px 50px rgb(0 0 0 / 20%); }
-  &__dialog { position: relative; z-index: 2; width: min(736px, calc(100vw - 220px)); margin: max(7dvh, 56px) auto 0; }
-  &.is-short-list &__dialog { margin: 0; }
+  &__dialog { position: relative; z-index: 2; width: min(736px, calc(100vw - 220px)); flex: none; margin: auto 0; }
   &__dialog.is-opening { animation: list-focus-card-in 340ms cubic-bezier(.2,.8,.2,1) backwards; }
   &__dialog.is-entering-next { animation: list-focus-slide-in-next 340ms cubic-bezier(.22,1,.36,1) backwards; }
   &__dialog.is-entering-previous { animation: list-focus-slide-in-previous 340ms cubic-bezier(.22,1,.36,1) backwards; }
@@ -1181,7 +1276,6 @@
   &__navigation { position: fixed; z-index: 3; inset: 50% 12px auto; display: flex; justify-content: space-between; pointer-events: none; transform: translateY(-50%); button { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; border: 1px solid rgb(255 255 255 / 35%); border-radius: 50%; background: rgb(20 28 40 / 84%); color: #fff; cursor: pointer; pointer-events: auto; transition: background-color 150ms ease, transform 150ms ease; svg { width: 22px; height: 22px; } &:hover, &:focus-visible { background: rgb(20 28 40 / 98%); transform: scale(1.07); } } }
   &__close { position: relative; z-index: 2; display: grid; width: 46px; height: 46px; place-items: center; margin: 16px auto 42px; padding: 0; border: 1px solid rgb(255 255 255 / 28%); border-radius: 50%; background: rgb(20 28 40 / 72%); color: #fff; cursor: pointer; transition: background-color 150ms ease, transform 150ms ease; svg { display: block; width: 22px; height: 22px; } &:hover, &:focus-visible { background: rgb(20 28 40 / 92%); transform: scale(1.05); } }
   &__close-mobile { display: none; }
-  &__dialog.has-short-list > &__close { top: auto; right: auto; bottom: -58px; left: 50%; transform: translateX(-50%); &:hover, &:focus-visible { transform: translateX(-50%) scale(1.05); } }
 }
 
 @media (max-width: 900px) {
@@ -1268,7 +1362,7 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
 
   &__name-row { display: flex; min-height: 54px; align-items: center; gap: 12px; padding: 0 16px; }
 
-  &__cancel { display: grid; width: 24px; height: 28px; flex: none; place-items: center; padding: 0; border: 0; background: transparent; color: var(--workspace-muted); cursor: pointer; svg { display: block; width: 20px; height: 20px; transition: transform 180ms ease; } &:hover, &:focus-visible { color: var(--workspace-text); } &:disabled { opacity: .6; cursor: wait; } }
+  &__cancel { display: grid; width: 24px; height: 28px; flex: none; place-items: center; padding: 0; border: 0; background: transparent; color: var(--workspace-muted); cursor: pointer; svg { display: block; width: 20px; height: 20px; transition: transform v.$motion-menu ease; } &:hover, &:focus-visible { color: var(--workspace-text); } &:disabled { opacity: .6; cursor: wait; } }
 
   form.is-expanded &__cancel svg { transform: rotate(45deg); transition-delay: 180ms; }
 
@@ -1365,13 +1459,6 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     flex: none;
   }
 
-  &:hover,
-  &.is-selected,
-  [aria-pressed='true'] & {
-    border-color: var(--workspace-border);
-    background: var(--workspace-hover);
-    color: var(--workspace-text);
-  }
 
 }
 
@@ -1394,8 +1481,10 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease, background-color 150ms ease, color 150ms ease;
   &:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgb(20 35 60 / 9%); }
   &:active { transform: none; box-shadow: inset 0 1px 3px rgb(20 35 60 / 14%); filter: brightness(.97); }
-  > svg:first-child, > .sidebar-flag__icon { transition: transform 150ms ease; }
-  &:hover > svg:first-child, &:hover > .sidebar-flag__icon { transform: scale(1.06); }
+  &:not(.task-create-more-button) > svg:first-child,
+  &:not(.task-create-more-button) > .sidebar-flag__icon { transition: transform 150ms ease; }
+  &:hover:not(.task-create-more-button) > svg:first-child,
+  &:hover:not(.task-create-more-button) > .sidebar-flag__icon { transform: scale(1.06); }
 }
 
 .task-list-card__flag-picker > summary:has(> span:first-child:not(.sidebar-flag__icon)) { gap: 4px; }
@@ -1416,6 +1505,9 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .task-create-dialog .task-create-toolbar .list-option-button,
+  .task-create-dialog .task-create-toolbar .list-option-button:not(.task-create-more-button) > svg:first-child,
+  .task-create-dialog .task-create-toolbar .list-option-button:not(.task-create-more-button) > .sidebar-flag__icon,
   .task-list-card__edit-toolbar .list-option-button,
   .task-list-card__flag-picker > summary,
   .task-list-card__edit-toolbar .list-option-button > svg:first-child,
@@ -1425,6 +1517,10 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     transition: none;
   }
 
+  .task-create-dialog .task-create-toolbar .list-option-button:hover,
+  .task-create-dialog .task-create-toolbar .list-option-button:active,
+  .task-create-dialog .task-create-toolbar .list-option-button:hover:not(.task-create-more-button) > svg:first-child,
+  .task-create-dialog .task-create-toolbar .list-option-button:hover:not(.task-create-more-button) > .sidebar-flag__icon,
   .task-list-card__edit-toolbar .list-theme-swatch:hover,
   .task-list-card__edit-toolbar .list-theme-swatch:active {
     transform: none;
@@ -1567,7 +1663,7 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   &.is-deadline &__days button.is-selected { background: #b65d56; }
   &.is-deadline &__quick button.is-selected { border-color: #b65d56; background: rgb(182 93 86 / 12%); }
   &.is-deadline &__selection button:not(:disabled) { color: #a9534d; }
-  &__repeat-panel { display: grid; min-width: 0; align-content: start; gap: 5px; animation: task-options-panel-in 180ms ease-out both; }
+  &__repeat-panel { display: grid; min-width: 0; align-content: start; gap: 5px; animation: list-options-in 180ms ease both; }
   &__repeat-panel button { min-height: 36px; padding: 6px 9px; border: 1px solid var(--workspace-border); border-radius: 7px; background: transparent; color: var(--workspace-text); font: inherit; font-size: .76rem; text-align: left; cursor: pointer; }
   &__repeat-panel button:hover:not(:disabled), &__repeat-panel button.is-selected { background: var(--workspace-hover); border-color: #3478d4; }
   &__repeat-panel button:disabled { opacity: .5; cursor: default; }
@@ -1591,9 +1687,32 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
 }
 
 @media (min-width: 701px) {
+  .task-create-dialog .task-create-toolbar > .flag-picker,
   .task-create-dialog .task-create-toolbar > .list-creator__date,
-  .task-create-dialog .task-create-toolbar .list-date-picker { position: static; }
-  .task-create-dialog .task-create-toolbar .list-date-picker__panel { top: calc(100% + 8px); left: 0; width: min(500px, 100%); }
+  .task-create-dialog .task-create-toolbar .list-date-picker { display: block; position: relative; flex: none; }
+
+  .task-create-dialog .task-create-toolbar .flag-picker__panel,
+  .task-create-dialog .task-create-toolbar .list-date-picker__panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: auto;
+    left: 0;
+    width: 240px;
+    max-height: 300px;
+    flex: none;
+    order: initial;
+    margin: 0;
+    padding: 12px;
+    border-radius: 10px;
+    background: var(--workspace-surface);
+    overflow-y: auto;
+    box-shadow: 0 12px 28px rgb(13 27 48 / 15%);
+  }
+
+  .task-create-dialog .task-create-toolbar .list-date-picker__panel {
+    width: min(500px, calc(100vw - 32px));
+    max-height: min(460px, calc(80svh - 150px));
+  }
 }
 
 .task-list-card__flag-picker .flag-picker__panel > .flag-picker__choice,
@@ -1742,6 +1861,8 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     padding-inline: 20px;
   }
 
+  .workspace-holiday-ribbon { margin-left: -20px; }
+
   .workspace-search {
     grid-column: 1 / -1;
     grid-row: 2;
@@ -1801,85 +1922,13 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .task-create-overlay:not(.is-inline) .task-create-dialog__options { padding: 12px 0 0; }
   .task-create-overlay:not(.is-inline) .task-create-error { position: static; width: auto; margin: 8px 16px; }
   // Both task composers share one mobile layout. Only panels occupy a full row.
+  .task-create-dialog .task-create-property { display: contents; }
   .task-create-dialog--inline { min-width: 0; padding: 10px; }
   .task-create-dialog .task-create-dialog__name-row { display: flex; gap: 8px; }
   .task-create-dialog .task-create-dialog__input-wrap { flex: 1 1 100%; min-height: 28px; }
   .task-create-dialog .task-create-dialog__submit { display: none; }
-  .task-create-dialog .task-create-dialog__description { width: 100%; max-width: none; flex: none; padding: 0 0 10px; animation: task-options-panel-in 180ms ease-out; }
+  .task-create-dialog .task-create-dialog__description { width: 100%; max-width: none; flex: none; padding: 0 0 10px; animation: list-options-in 180ms ease both; }
   .task-create-dialog .task-create-dialog__description textarea { min-height: 60px; max-height: 120px; font-size: 1rem; }
-  .task-create-dialog .task-create-toolbar {
-    display: flex;
-    width: 100%;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 6px;
-    margin: 0;
-    padding: 10px 0 0;
-  }
-  .task-create-dialog .task-create-toolbar > .flag-picker,
-  .task-create-dialog .task-create-toolbar > .list-creator__date,
-  .task-create-dialog .task-create-toolbar .list-date-picker,
-  .task-create-dialog .task-create-toolbar.is-more-open > .task-create-menu,
-  .task-create-dialog .task-create-menu__main { display: contents; }
-  .task-create-dialog .task-create-toolbar .list-option-button {
-    display: flex;
-    width: auto;
-    min-width: 36px;
-    max-width: 100%;
-    height: 38px;
-    min-height: 38px;
-    flex: 0 0 auto;
-    flex-direction: row;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 6px;
-    padding: 0 8px;
-    border: 1px solid var(--workspace-border);
-    border-radius: 7px;
-    background: var(--workspace-surface);
-    color: var(--workspace-muted);
-    font-size: .76rem;
-    line-height: 1.3;
-    text-align: left;
-    justify-self: start;
-    transform: none;
-    box-shadow: none;
-  }
-  .task-create-dialog .task-create-toolbar > .list-option-button { width: 36px; justify-content: center; }
-  .task-create-dialog .task-create-toolbar > .list-creator__more { margin-left: 0; }
-  .task-create-dialog .task-create-toolbar.is-more-open { margin: 0; }
-  .task-create-dialog .task-create-toolbar .task-create-more-button { border-color: #3478d4; background: #3478d4; color: #fff; }
-  .task-create-dialog .task-create-toolbar > .list-option-button:is([aria-expanded='true'], .is-selected) { border-color: #3478d4; background: rgb(52 120 212 / 9%); color: #3478d4; }
-  .task-create-dialog .task-create-toolbar .list-option-button.has-deadline { border-color: #b65d56; background: rgb(182 93 86 / 12%); color: #a9534d; }
-  .task-create-dialog .task-create-toolbar .sidebar-flag__icon,
-  .task-create-dialog .task-create-menu__icon,
-  .task-create-dialog .task-create-menu__main > .task-urgency-picker > .task-urgency-picker__mark { display: grid; width: 17px; min-width: 17px; height: 17px; flex: 0 0 17px; place-items: center; }
-  .task-create-dialog .task-create-menu__icon svg { width: 17px; height: 17px; }
-  .task-create-dialog .task-create-menu__chevron,
-  .task-create-dialog .task-urgency-picker__chevron { display: none; }
-  .task-create-dialog .task-create-menu__label { max-width: 100%; font-size: inherit; text-align: left; }
-  .task-create-dialog .task-create-toolbar .flag-picker__panel,
-  .task-create-dialog .task-create-toolbar .task-urgency-picker__panel,
-  .task-create-dialog .task-create-toolbar .task-create-menu__field,
-  .task-create-dialog .task-create-toolbar .list-date-picker__panel {
-    position: static;
-    order: 10;
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-    max-height: none;
-    flex: 0 0 100%;
-    margin: 4px 0 0;
-    padding: 10px;
-    border: 1px solid var(--workspace-border);
-    border-radius: 9px;
-    background: var(--workspace-bg);
-    overflow: visible;
-    box-shadow: none;
-    animation: task-options-panel-in 180ms ease-out;
-  }
-  .task-create-dialog .task-urgency-picker__panel { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .task-create-dialog .task-urgency-picker__choice,
   .task-create-dialog .flag-picker__choice { min-height: 38px; padding: 8px; }
   .task-create-dialog .flag-picker__choice { overflow-wrap: anywhere; }
@@ -1909,8 +1958,8 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
   .task-create-dialog:has(.list-date-picker.is-open) .task-create-dialog__mobile-title { margin-bottom: 8px; }
   .task-create-overlay:not(.is-inline) .task-create-dialog:has(.list-date-picker.is-open) .task-create-dialog__options { padding-top: 8px; }
   .task-create-dialog:has(.list-date-picker.is-open) .task-create-dialog__options { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-  .task-create-dialog:has(.list-date-picker.is-open) .task-create-toolbar { display: grid; min-height: 0; flex: 1; grid-template-columns: 36px 36px max-content minmax(0, 1fr); grid-template-rows: 38px minmax(min-content, 1fr); }
-  .task-create-dialog:has(.list-date-picker.is-open) .list-date-picker__panel { grid-column: 1 / -1; margin-top: 0; }
+  .task-create-dialog:has(.list-date-picker.is-open) .task-create-toolbar { min-height: 0; flex: 1; align-content: flex-start; }
+  .task-create-dialog:has(.list-date-picker.is-open) .list-date-picker__panel { margin-top: 0; }
   @media (prefers-reduced-motion: reduce) {
     .task-create-dialog .task-create-toolbar .list-option-button,
     .task-create-dialog .task-create-toolbar .flag-picker__panel,
@@ -1920,8 +1969,7 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     .task-create-dialog .task-create-dialog__description { animation: none; transition: none; }
   }
   .task-create-overlay.is-inline .task-create-error { position: static; width: 100%; margin: 6px 0 0; }
-  .list-focus-overlay.workspace-shell,
-  .list-focus-overlay.workspace-shell.is-short-list {
+  .list-focus-overlay.workspace-shell {
     position: fixed;
     z-index: 1300;
     inset: 0;
@@ -2080,8 +2128,10 @@ body.is-list-dragging { cursor: grabbing; user-select: none; }
     gap: 7px;
   }
 
-  .workspace-header__left .theme-toggle,
+  .workspace-header__right .theme-toggle,
   .workspace-header__notifications { display: none; }
+
+  .workspace-holiday-ribbon { width: 42px; height: 34px; flex: none; margin-left: 0; }
 
   .workspace-sidebar__theme { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 18px; padding: 10px; border: 1px solid var(--workspace-border); border-radius: 9px; color: var(--workspace-text); font-size: .84rem; }
 

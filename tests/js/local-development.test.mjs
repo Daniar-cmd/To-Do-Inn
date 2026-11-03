@@ -13,6 +13,7 @@ test('the frontend uses Laravel, and production assets cannot overwrite the PHP 
   assert.notEqual(config.build.outDir, config.root);
   assert.notEqual(config.build.outDir, resolve('public'));
   assert.equal(config.publicDir, false);
+  assert.ok(!Object.values(config.build.rollupOptions.input).includes(resolve('frontend/pages/design-system.html')), 'the design catalog must stay out of production');
 });
 
 test('the documented API command selects the separate Laravel environment and loopback port', async () => {

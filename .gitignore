@@ -17,3 +17,5 @@ AGENTS.md
 /docs/*
 !/docs/corporate-accounts.md
 !/docs/security-performance-audit.md
+
+!/docs/design-system.md
