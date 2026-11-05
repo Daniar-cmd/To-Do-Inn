@@ -337,6 +337,17 @@ export function Workspace() {
     }
   }
 
+  async function moveTask(taskId, targetListId, targetTaskId) {
+    const boardId = board.id;
+    try {
+      await updateWorkspace({ action: 'move_task', task_id: taskId, target_list_id: targetListId,
+        target_task_id: targetTaskId }, csrfToken);
+    } catch (error) {
+      setFeedback(error.message);
+    }
+    await refreshBoardData(boardId);
+  }
+
   async function handleCreateBoard(event) {
     event.preventDefault();
     if (!boardName.trim()) {
@@ -887,7 +898,7 @@ export function Workspace() {
                 <p className="workspace-search-result__board">{result.board_name}</p>
                 <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
               </div>)}
-            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} onSwap={reorderListCards}>
+            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} onSwap={reorderListCards} onMoveTask={moveTask}>
               {(list, dragHandle, isFullscreen = false) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} isFullscreen={isFullscreen} />}
             </ListGrid>}
           </section>

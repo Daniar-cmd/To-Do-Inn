@@ -5,10 +5,13 @@ import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot
 const motionOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
 const carouselDuration = 440;
 
-export function ListGrid({ lists, onSwap, children }) {
+export function ListGrid({ lists, onSwap, onMoveTask, children }) {
   const gridRef = useRef(null);
   const slots = useRef(new Map());
   const gesture = useRef(null);
+  const taskGesture = useRef(null);
+  const onMoveTaskRef = useRef(onMoveTask);
+  onMoveTaskRef.current = onMoveTask;
   const stopGesture = useRef(null);
   const lastPositions = useRef(new Map());
   const releasePositions = useRef(null);
@@ -185,6 +188,195 @@ export function ListGrid({ lists, onSwap, children }) {
   useEffect(() => () => {
     window.clearTimeout(slideTimer.current);
     window.clearTimeout(swipeResetTimer.current);
+  }, []);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return undefined;
+
+    function animateRows(list, before) {
+      for (const row of list.querySelectorAll(':scope > li[data-task-id]')) {
+        const previous = before.get(row);
+        if (!previous || !row.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
+        const current = row.getBoundingClientRect();
+        const dx = previous.left - current.left;
+        const dy = previous.top - current.top;
+        if (Math.abs(dx) + Math.abs(dy) < 1) continue;
+        row.getAnimations().forEach((animation) => animation.cancel());
+        const animation = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], { ...motionOptions, duration: 240 });
+        animation.onfinish = () => animation.cancel();
+      }
+    }
+
+    function captureRows() {
+      return new Map([...grid.querySelectorAll('.task-list-card__tasks:not(.is-completed) > li[data-task-id]')]
+        .map((row) => [row, row.getBoundingClientRect()]));
+    }
+
+    function placePlaceholder(ul, point) {
+      const active = taskGesture.current;
+      if (!active || active.placeholder.parentElement === null) return;
+      const before = captureRows();
+      const rows = [...ul.querySelectorAll(':scope > li[data-task-id]:not(.is-task-drag-source)')];
+      const target = rows.find((row) => point.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
+      if (target) ul.insertBefore(active.placeholder, target);
+      else ul.append(active.placeholder);
+      for (const candidate of grid.querySelectorAll('.task-list-card__tasks:not(.is-completed)')) {
+        candidate.classList.toggle('is-task-drop-zone', candidate === ul);
+      }
+      animateRows(ul, before);
+      for (const row of grid.querySelectorAll('.task-list-card__tasks:not(.is-completed) > li[data-task-id]')) {
+        const previous = before.get(row);
+        if (!previous || row.closest('ul') === ul || !row.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
+        const current = row.getBoundingClientRect();
+        const dx = previous.left - current.left;
+        const dy = previous.top - current.top;
+        if (Math.abs(dx) + Math.abs(dy) > 1) {
+          row.getAnimations().forEach((animation) => animation.cancel());
+          const animation = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], { ...motionOptions, duration: 240 });
+          animation.onfinish = () => animation.cancel();
+        }
+      }
+    }
+
+    function cleanGesture({ keepPosition = false } = {}) {
+      const active = taskGesture.current;
+      if (!active) return;
+      taskGesture.current = null;
+      window.removeEventListener('pointermove', moveTask);
+      window.removeEventListener('pointerup', finishTask);
+      window.removeEventListener('pointercancel', cancelTask);
+      active.preview?.remove();
+      if (active.started) window.setTimeout(() => { delete active.handle.dataset.dragged; }, 0);
+      if (keepPosition && active.placeholder.isConnected) {
+        active.placeholder.replaceWith(active.source);
+      } else {
+        active.placeholder.remove();
+        active.source.classList.remove('is-task-drag-source');
+      }
+      grid.querySelectorAll('.is-task-drop-zone').forEach((node) => node.classList.remove('is-task-drop-zone'));
+    }
+
+    function moveTask(event) {
+      const active = taskGesture.current;
+      if (!active || event.pointerId !== active.pointerId) return;
+      const dx = event.clientX - active.startX;
+      const dy = event.clientY - active.startY;
+      if (!active.started && Math.hypot(dx, dy) < 6) return;
+      event.preventDefault();
+      if (!active.started) {
+        active.started = true;
+        active.handle.dataset.dragged = 'true';
+        const bounds = active.source.getBoundingClientRect();
+        active.placeholder.style.height = `${bounds.height}px`;
+        active.source.parentElement.insertBefore(active.placeholder, active.source);
+        active.source.classList.add('is-task-drag-source');
+        active.preview = active.source.cloneNode(true);
+        active.preview.removeAttribute('data-task-id');
+        active.preview.classList.add('task-drag-preview');
+        const card = active.source.closest('.task-list-card');
+        active.preview.style.setProperty('--card-accent', window.getComputedStyle(card).getPropertyValue('--card-accent'));
+        Object.assign(active.preview.style, {
+          position: 'fixed', left: `${bounds.left}px`, top: `${bounds.top}px`, width: `${bounds.width}px`,
+          height: `${bounds.height}px`, margin: '0', zIndex: '2000', pointerEvents: 'none',
+        });
+        (grid.closest('.workspace-shell') || document.body).append(active.preview);
+        active.preview.classList.add('is-lifting');
+      }
+      active.preview.style.left = `${event.clientX - active.offsetX}px`;
+      active.preview.style.top = `${event.clientY - active.offsetY}px`;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.task-list-card__tasks:not(.is-completed)');
+      if (target && grid.contains(target) && target.dataset.boardId === active.boardId) placePlaceholder(target, event);
+    }
+
+    async function finishTask(event) {
+      const active = taskGesture.current;
+      if (!active || event.pointerId !== active.pointerId) return;
+      if (!active.started) {
+        taskGesture.current = null;
+        window.removeEventListener('pointermove', moveTask);
+        window.removeEventListener('pointerup', finishTask);
+        window.removeEventListener('pointercancel', cancelTask);
+        return;
+      }
+      const targetListId = active.placeholder.parentElement?.dataset.listId;
+      if (!targetListId) {
+        cleanGesture({ keepPosition: true });
+        return;
+      }
+      const nextRow = (() => {
+        let node = active.placeholder.nextElementSibling;
+        while (node && !node.matches('li[data-task-id]')) node = node.nextElementSibling;
+        return node;
+      })();
+      const targetTaskId = nextRow?.dataset.taskId || null;
+      const destination = active.placeholder.getBoundingClientRect();
+      const animationsAllowed = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (animationsAllowed) {
+        active.preview.animate([
+          { transform: 'translateY(-2px) scale(1.025)' },
+          { transform: `translate(${destination.left - active.preview.getBoundingClientRect().left}px, ${destination.top - active.preview.getBoundingClientRect().top}px) scale(.96)` },
+        ], { duration: 210, easing: 'cubic-bezier(.68, 0, .84, 0)', fill: 'forwards' });
+      }
+      taskGesture.current = null;
+      window.removeEventListener('pointermove', moveTask);
+      window.removeEventListener('pointerup', finishTask);
+      window.removeEventListener('pointercancel', cancelTask);
+      grid.querySelectorAll('.is-task-drop-zone').forEach((node) => node.classList.remove('is-task-drop-zone'));
+      window.setTimeout(() => active.preview.remove(), animationsAllowed ? 215 : 0);
+      window.setTimeout(() => { delete active.handle.dataset.dragged; }, 0);
+      const moved = String(targetListId) !== active.sourceListId || targetTaskId !== active.originalNextTaskId;
+      if (!moved) {
+        active.placeholder.replaceWith(active.source);
+        active.source.classList.remove('is-task-drag-source');
+        return;
+      }
+      try {
+        await active.onMoveTask(Number(active.taskId), Number(targetListId), targetTaskId ? Number(targetTaskId) : null);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      } finally {
+        const beforeCleanup = captureRows();
+        active.placeholder.remove();
+        active.source.classList.remove('is-task-drag-source');
+        for (const ul of grid.querySelectorAll('.task-list-card__tasks:not(.is-completed)')) animateRows(ul, beforeCleanup);
+      }
+    }
+
+    function cancelTask(event) {
+      const active = taskGesture.current;
+      if (!active || (event.pointerId !== undefined && event.pointerId !== active.pointerId)) return;
+      cleanGesture({ keepPosition: true });
+    }
+
+    function startTask(event) {
+      if (event.button !== 0 || !event.isPrimary || savingRef.current || focusedIdRef.current !== null || gesture.current?.active) return;
+      const handle = event.target.closest?.('.task-list-card__task-menu');
+      const source = handle?.closest('li[data-task-id]');
+      const ul = source?.closest('.task-list-card__tasks:not(.is-completed)');
+      if (!source || !ul || !grid.contains(ul)) return;
+      const bounds = source.getBoundingClientRect();
+      let nextRow = source.nextElementSibling;
+      while (nextRow && !nextRow.matches('li[data-task-id]')) nextRow = nextRow.nextElementSibling;
+      taskGesture.current = {
+        source, sourceListId: ul.dataset.listId, boardId: ul.dataset.boardId, taskId: source.dataset.taskId,
+        handle,
+        originalNextTaskId: nextRow?.dataset.taskId || null, startX: event.clientX, startY: event.clientY,
+        offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top, pointerId: event.pointerId,
+        placeholder: document.createElement('li'), preview: null,
+        onMoveTask: (...args) => onMoveTaskRef.current(...args),
+      };
+      taskGesture.current.placeholder.className = 'task-drag-placeholder';
+      taskGesture.current.placeholder.setAttribute('aria-hidden', 'true');
+      window.addEventListener('pointermove', moveTask, { passive: false });
+      window.addEventListener('pointerup', finishTask);
+      window.addEventListener('pointercancel', cancelTask);
+    }
+
+    grid.addEventListener('pointerdown', startTask);
+    return () => {
+      grid.removeEventListener('pointerdown', startTask);
+      if (taskGesture.current) cleanGesture({ keepPosition: true });
+    };
   }, []);
 
   useEffect(() => {

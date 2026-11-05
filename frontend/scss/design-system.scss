@@ -7,6 +7,7 @@
   --ui-motion-menu: #{v.$motion-menu};
   --ui-motion-roll: #{v.$motion-roll};
   --ui-motion-star: #{v.$motion-star};
+  --ui-motion-task-drag: #{v.$motion-task-drag};
   @each $name, $value in v.$spacing { --ui-space-#{$name}: #{$value}; }
   @each $name, $value in v.$radii { --ui-radius-#{$name}: #{$value}; }
   @each $name, $value in v.$type-sizes { --ui-type-#{$name}: #{$value}; }
@@ -27,6 +28,10 @@
 .design-library__brand span { color: var(--workspace-muted); font-size: .85rem; font-weight: 450; letter-spacing: 0; }
 .design-library__theme, .design-library__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .design-library__row { margin-top: 20px; }
+.design-library__drag-motion { display: grid; justify-items: start; gap: 10px; margin-top: 22px; }
+.design-library__drag-motion-stage { display: grid; width: min(100%, 480px); gap: 8px; padding: 20px; border: 1px solid var(--workspace-border); border-radius: 10px; background: var(--workspace-bg); }
+.design-library__drag-motion-stage .task-drag-preview { position: relative; width: 100%; }
+.design-library__drag-motion-stage .task-list-card__task { min-height: 50px; }
 .design-library__layout { display: grid; width: min(100%, 1440px); margin-inline: auto; grid-template-columns: 200px minmax(0, 1fr); }
 .design-library__nav { position: sticky; top: 76px; display: flex; height: fit-content; flex-direction: column; gap: 4px; padding: 32px 16px; }
 .design-library__nav a { padding: 8px 12px; border-radius: 7px; color: var(--workspace-muted); font-size: .85rem; text-decoration: none; transition: background-color 150ms ease, color 150ms ease; }

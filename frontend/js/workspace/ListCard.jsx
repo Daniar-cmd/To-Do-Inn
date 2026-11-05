@@ -56,7 +56,6 @@ export function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, o
   const [taskDeleteError, setTaskDeleteError] = useState('');
   const [pinning, setPinning] = useState(false);
   const [animatingTasks, setAnimatingTasks] = useState(() => new Set());
-  const [draggingTaskId, setDraggingTaskId] = useState(null);
   const [name, setName] = useState(list.name);
   const [description, setDescription] = useState(list.description || '');
   const [cardTheme, setCardTheme] = useState(list.theme);
@@ -369,8 +368,8 @@ export function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, o
             {isFullscreen && <div ref={taskInlineComposerRef} className={`task-list-card__inline-composer${taskEntryOpen ? ' is-open' : ''}`} />}
          </div>
        {pending.length > 0 && <div className="task-list-card__section-label">ЗАДАЧИ</div>}
-        <ul className={`task-list-card__tasks${completed.length === 0 ? ' has-no-completed' : ''}`}>{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} isFullscreen={isFullscreen} />)}</ul>
-       {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} isFullscreen={isFullscreen} />)}</ul>}</footer>}
+        <ul data-list-id={list.id} data-board-id={list.board_id} className={`task-list-card__tasks${completed.length === 0 ? ' has-no-completed' : ''}`}>{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} nativeDrag={!dragHandle || isFullscreen} isFullscreen={isFullscreen} />)}</ul>
+       {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} nativeDrag={!dragHandle || isFullscreen} isFullscreen={isFullscreen} />)}</ul>}</footer>}
       {error && <p role="alert" className="task-list-card__error">{error}</p>}
     </>}
   </article>

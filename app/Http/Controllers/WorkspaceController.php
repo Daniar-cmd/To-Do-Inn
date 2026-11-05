@@ -46,7 +46,7 @@ class WorkspaceController
                     'reorder_list' => $this->reorderList($input, $userId),
                     'create_flag' => $this->createFlag($input, $userId),
                     'invite_member' => $this->inviteMember($input, $userId),
-                    'create_task', 'update_task', 'toggle_task', 'reorder_task', 'delete_task', 'stop_task_repeat' => $this->saveTask($input, $userId),
+                    'create_task', 'update_task', 'toggle_task', 'reorder_task', 'move_task', 'delete_task', 'stop_task_repeat' => $this->saveTask($input, $userId),
                     default => $this->fail(400, 'Unknown action'),
                 };
             });
@@ -495,7 +495,9 @@ class WorkspaceController
                     : 'Название задачи должно содержать от 1 до 240 символов.');
             }
         } elseif ($id === false || ($action === 'toggle_task' && !is_bool($input['is_completed'] ?? null))
-            || ($action === 'reorder_task' && $this->id($input['target_task_id'] ?? null) === false)) {
+            || ($action === 'reorder_task' && $this->id($input['target_task_id'] ?? null) === false)
+            || ($action === 'move_task' && ($this->id($input['target_list_id'] ?? null) === false
+                || (($input['target_task_id'] ?? null) !== null && $this->id($input['target_task_id']) === false)))) {
             $this->fail(422, 'Некорректная задача.');
         }
         if ($action === 'create_task') {
@@ -582,6 +584,56 @@ class WorkspaceController
             $this->fail(404, 'Задача не найдена.');
         }
         $boardOwnerId = (int) $board->user_id;
+        if ($action === 'move_task') {
+            $targetListId = $this->id($input['target_list_id']);
+            $targetList = DB::table('task_lists')->where('id', $targetListId)
+                ->where('user_id', $boardOwnerId)->first();
+            $targetBoard = $targetList === null ? null : $this->accessibleBoard((int) $targetList->board_id, $userId);
+            if ($targetList === null || $targetBoard === null || (int) $targetList->board_id !== (int) $list->board_id
+                || (int) $targetBoard->user_id !== $boardOwnerId) {
+                $this->fail(404, 'Целевой список не найден на этой доске.');
+            }
+
+            $targetTaskId = ($input['target_task_id'] ?? null) === null ? null : $this->id($input['target_task_id']);
+            $sourceIds = DB::table('tasks')->where('list_id', $list->id)->where('user_id', $boardOwnerId)
+                ->orderBy('sort_order')->orderBy('id')->lockForUpdate()->pluck('id')->map(fn ($value) => (int) $value)->all();
+            if ($targetListId === (int) $list->id) {
+                $orderedIds = $sourceIds;
+            } else {
+                $orderedIds = DB::table('tasks')->where('list_id', $targetListId)->where('user_id', $boardOwnerId)
+                    ->orderBy('sort_order')->orderBy('id')->lockForUpdate()->pluck('id')->map(fn ($value) => (int) $value)->all();
+            }
+            $sourceIndex = array_search($id, $sourceIds, true);
+            if ($sourceIndex === false) $this->fail(404, 'Задача не найдена.');
+            array_splice($sourceIds, $sourceIndex, 1);
+            if ($targetTaskId !== null) {
+                $targetIndex = array_search($targetTaskId, $orderedIds, true);
+                if ($targetIndex === false || $targetTaskId === $id) $this->fail(404, 'Целевая задача не найдена в этом списке.');
+                if ($targetListId === (int) $list->id) {
+                    $orderedIds = $sourceIds;
+                    $targetIndex = array_search($targetTaskId, $orderedIds, true);
+                }
+                array_splice($orderedIds, $targetIndex, 0, [$id]);
+            } else {
+                if ($targetListId === (int) $list->id) $orderedIds = $sourceIds;
+                $orderedIds[] = $id;
+            }
+
+            DB::table('tasks')->where('id', $id)->where('user_id', $boardOwnerId)
+                ->update(['list_id' => $targetListId]);
+            foreach ($orderedIds as $position => $orderedId) {
+                DB::table('tasks')->where('id', $orderedId)->where('user_id', $boardOwnerId)
+                    ->update(['sort_order' => $position]);
+            }
+            if ($targetListId !== (int) $list->id) {
+                foreach ($sourceIds as $position => $orderedId) {
+                    DB::table('tasks')->where('id', $orderedId)->where('user_id', $boardOwnerId)
+                        ->update(['sort_order' => $position]);
+                }
+            }
+
+            return $this->success(['updated' => true]);
+        }
         if ($action === 'stop_task_repeat') {
             if ($task->repeat_interval === null || $task->repeat_series_id === null) {
                 $this->fail(409, 'Повторение уже остановлено.');

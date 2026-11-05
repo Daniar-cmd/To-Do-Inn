@@ -53,6 +53,18 @@ function ToolbarPreview() {
   </div>;
 }
 
+function TaskDragMotionPreview() {
+  const [version, setVersion] = useState(0);
+  return <div className="design-library__drag-motion">
+    <button type="button" className="list-option-button" onClick={() => setVersion((current) => current + 1)}>Повторить подъём задачи</button>
+    <div key={version} className="design-library__drag-motion-stage" aria-label="Пример подъёма перетаскиваемой задачи">
+      <div className="task-drag-preview is-lifting"><div className="task-list-card__task"><span className="task-list-card__task-mark" aria-hidden="true" /><span className="task-list-card__task-title">Перетаскиваемая задача</span></div></div>
+      <div className="task-drag-placeholder" aria-hidden="true" />
+    </div>
+    <span className="design-library__caption">Карточка упруго выходит из списка; пунктир показывает её место при перестановке.</span>
+  </div>;
+}
+
 export function DesignSystem() {
   const [theme, setTheme] = useState('light');
   const [values, setValues] = useState({});
@@ -65,7 +77,7 @@ export function DesignSystem() {
 
   useEffect(() => {
     const style = getComputedStyle(rootRef.current);
-    const names = [...palette.map(([name]) => `--workspace-${name}`), ...['accent', 'important', 'motion-menu', 'motion-roll', 'motion-star'].map((name) => `--ui-${name}`)];
+    const names = [...palette.map(([name]) => `--workspace-${name}`), ...['accent', 'important', 'motion-menu', 'motion-roll', 'motion-star', 'motion-task-drag'].map((name) => `--ui-${name}`)];
     setValues(Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name).trim()])));
   }, [theme]);
 
@@ -109,6 +121,8 @@ export function DesignSystem() {
           <ToolbarPreview key={previewVersion} />
           <div className="design-library__row"><button type="button" className="list-option-button" onClick={() => setPreviewVersion((current) => current + 1)}>Сбросить пример</button><span className="design-library__caption">Звезда · {values['--ui-motion-star']}; выкатывание · {values['--ui-motion-roll']}; поворот «+» · {values['--ui-motion-menu']}</span></div>
           <p className="design-library__caption">Кнопки выходят последовательно: 0 / 45 / 90 ms. При нехватке ширины переносятся. При prefers-reduced-motion движение отключается.</p>
+          <TaskDragMotionPreview />
+          <p className="design-library__caption">Подъём задачи · {values['--ui-motion-task-drag']}. Соседние строки плавно занимают новое место во время движения.</p>
         </Section>
         <Section id="blocks" title="Готовые блоки">
           <div className="design-library__blocks">
