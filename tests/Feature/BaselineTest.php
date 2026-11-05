@@ -18,6 +18,8 @@ class BaselineTest extends DatabaseTestCase
 
         // These tests exercise adoption of the frozen legacy schema, so temporarily restore
         // that schema inside the test transaction after all forward migrations are applied.
+        $passwordVersionMigration = require database_path('migrations/2026_11_05_000001_add_password_version_to_users.php');
+        $passwordVersionMigration->down();
         $repeatMigration = require database_path('migrations/2026_11_01_000021_add_task_recurrence.php');
         $repeatMigration->down();
         $taskUrgencyLevelsMigration = require database_path('migrations/2026_10_31_000020_add_task_urgency_levels.php');

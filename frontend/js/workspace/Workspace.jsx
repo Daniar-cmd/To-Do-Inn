@@ -1,45 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { createBoard, createTaskList, deleteBoard, deleteTaskList, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
+import { createBoard, createTaskList, deleteBoard, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
 import { NotificationsMenu } from '../NotificationsMenu.jsx';
+import { ListCard } from './ListCard.jsx';
 import { ListGrid } from './ListGrid.jsx';
-import { formatListDueDate } from './listDate.js';
 import { groupTasksByList, moveListToSlot } from './listGrid.js';
-import { ListDeleteDialog } from './ListDeleteDialog.jsx';
 import { ListDatePicker } from './ListDatePicker.jsx';
-import { UserIcon, PlusIcon, SettingsIcon, BoardTypeIcon, FlagIcon, StarIcon, AnnotationIcon, LocationIcon } from '../ui/icons.jsx';
-import { uiText, taskUrgencyLevels } from '../ui/text.js';
+import { UserIcon, PlusIcon, SettingsIcon, BoardTypeIcon, FlagIcon, StarIcon } from '../ui/icons.jsx';
+import { listThemes } from '../ui/text.js';
 import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
-import holidayAudio from '../../assets/unity-day.m4a';
 
 const accountTypeLabels = {
   individual: 'Индивидуальный аккаунт',
   team: 'Аккаунт команды',
   corporate: 'Корпоративный аккаунт',
 };
-
-const themes = [
-  ['blue', 'Синяя тема'],
-  ['violet', 'Фиолетовая тема'],
-  ['green', 'Зелёная тема'],
-  ['amber', 'Янтарная тема'],
-  ['rose', 'Розовая тема'],
-  ['sky', 'Голубая тема'],
-];
-
-
-
-function formatListCreatedAt(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  const dateText = new Intl.DateTimeFormat('ru-RU', {
-    day: 'numeric', month: 'short', year: 'numeric',
-  }).format(date);
-  const timeText = new Intl.DateTimeFormat('ru-RU', {
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).format(date);
-  return `${dateText} ${timeText}`;
-}
 
 function ThemeSwitch({ theme, onChange }) {
   const isDark = theme === 'dark';
@@ -58,564 +32,6 @@ function ThemeSwitch({ theme, onChange }) {
   );
 }
 
-function completedTasksLabel(count) {
-  const remainder100 = count % 100;
-  const remainder10 = count % 10;
-  const noun = remainder100 >= 11 && remainder100 <= 14
-    ? 'задач'
-    : remainder10 === 1 ? 'задача' : remainder10 >= 2 && remainder10 <= 4 ? 'задачи' : 'задач';
-
-  return `Выполнено ${count} ${noun}`;
-}
-
-function TaskBadges({ flag, dueDate, deadline, urgency, location }) {
-  const deadlineLabel = deadline
-    ? `${deadline.slice(8, 10)}.${deadline.slice(5, 7)}.${deadline.slice(2, 4)}`
-    : '';
-  return <span className="task-list-card__task-badges">
-    {flag && <span className={`task-list-card__flag-tag is-${flag.color}`}>{flag.name}</span>}
-    {dueDate && <time className="task-list-card__due-date is-scheduled" dateTime={dueDate}>{formatListDueDate(dueDate)}</time>}
-    {deadline && <time className="task-list-card__due-date is-deadline" dateTime={deadline} aria-label={`Дедлайн: ${deadlineLabel}`} title={`Дедлайн: ${deadlineLabel}`}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M12 22c4.5 0 7-3 7-7 0-3-1.5-5-4-7 .3 2-1 3.3-2 4-1-3-.5-5.5-2.5-9C9 6 5 9 5 15c0 4 2.5 7 7 7Z"/><path d="M12 22c2.3 0 3.5-1.4 3.5-3.4 0-1.8-1-3-2.5-4.6-.2 1.4-1.1 2.2-2.1 2.8-.4-.8-.5-1.5-.4-2.3-1.4 1.7-2 3-2 4 0 2 1.2 3.1 3.5 3.1Z"/></svg>{deadlineLabel}</time>}
-    {urgency > 0 && <span className={`task-list-card__task-urgency is-level-${urgency}`} aria-label={`Срочность: ${taskUrgencyLevels[urgency - 1]?.label}`} title={taskUrgencyLevels[urgency - 1]?.label}>{'!'.repeat(urgency)}</span>}
-    {location && <span className="task-list-card__location">{location}</span>}
-  </span>;
-}
-
-function ListTask({ task, csrfToken, onToggle, onChange, onReorder, onDelete, animating, draggingTaskId, onDragStart, onDragEnd, isFullscreen = false }) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(task.title);
-  const [error, setError] = useState('');
-  const [confirmingRepeatStop, setConfirmingRepeatStop] = useState(false);
-  const [stoppingRepeat, setStoppingRepeat] = useState(false);
-  const [dropTarget, setDropTarget] = useState(false);
-  const draggedRef = useRef(false);
-  const cancelledEdit = useRef(false);
-  const savingTitle = useRef(false);
-  const completed = task.is_completed || animating;
-  const annotation = task.description?.replace(/\s+/g, ' ').trim();
-
-  useEffect(() => setTitle(task.title), [task.title]);
-
-  async function saveTitle() {
-    if (cancelledEdit.current) {
-      cancelledEdit.current = false;
-      setEditing(false);
-      setTitle(task.title);
-      return;
-    }
-    if (savingTitle.current) return;
-    const nextTitle = title.trim();
-    setEditing(false);
-    if (!nextTitle || nextTitle === task.title) {
-      setTitle(task.title);
-      return;
-    }
-    savingTitle.current = true;
-    try {
-      await updateWorkspace({ action: 'update_task', task_id: task.id, title: nextTitle }, csrfToken);
-      setError('');
-      await onChange();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      savingTitle.current = false;
-    }
-  }
-
-  async function stopRepeat() {
-    if (stoppingRepeat) return;
-    setStoppingRepeat(true);
-    try {
-      await updateWorkspace({ action: 'stop_task_repeat', task_id: task.id }, csrfToken);
-      setError('');
-      setConfirmingRepeatStop(false);
-      await onChange();
-    } catch (err) { setError(err.message); }
-    finally { setStoppingRepeat(false); }
-  }
-
-  return <li className={`${dropTarget ? 'is-drop-target ' : ''}${draggingTaskId === task.id ? 'is-dragging' : ''}`} onDragOver={(event) => { if (task.is_completed) return; event.preventDefault(); setDropTarget(true); }} onDragLeave={() => setDropTarget(false)} onDrop={(event) => { event.preventDefault(); setDropTarget(false); if (task.is_completed) return; const draggedId = Number(event.dataTransfer.getData('text/plain')); if (draggedId && draggedId !== task.id) onReorder(draggedId, task.id); onDragEnd(); }}>
-    <div className={`task-list-card__task${completed ? ' is-completed' : ''}${animating ? ' is-completing' : ''}`}>
-      {task.is_important && !editing && <span className="task-list-card__task-important" aria-label="Важная задача" title="Важная задача"><StarIcon /></span>}
-      <span className="task-list-card__task-control">
-        <input type="checkbox" aria-label={`Отметить задачу «${task.title}» выполненной`} checked={task.is_completed || animating} onChange={() => onToggle(task)} />
-        <span className="task-list-card__task-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><path d="m5 10 3.2 3.2L15 6.5" /></svg></span>
-      </span>
-      <div className="task-list-card__task-content">
-        <div className="task-list-card__task-line">
-          {editing ? <input className="task-list-card__task-edit" aria-label="Название задачи" autoFocus maxLength="240" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={saveTitle} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelledEdit.current = true; event.currentTarget.blur(); } }} /> : <span className="task-list-card__task-title" onDoubleClick={() => { if (!completed) { setTitle(task.title); setEditing(true); } }}>{task.title}</span>}{' '}
-           {!editing && <TaskBadges flag={task.flag} dueDate={task.due_date} deadline={task.deadline} urgency={task.urgency} location={task.location && `${task.location}${task.scheduled_time ? ` · ${task.scheduled_time.slice(0, 5)}` : ''}`} />}
-        </div>
-        {annotation && <span className="task-list-card__task-description" title={task.description}>{Array.from(annotation).slice(0, 60).join('')}{Array.from(annotation).length > 60 ? '…' : ''}</span>}
-        {isFullscreen && task.repeat_interval && <button className="task-list-card__stop-repeat" type="button" aria-label={`Остановить повторение: ${({ daily: 'ежедневно', weekly: 'еженедельно', monthly: 'ежемесячно', yearly: 'ежегодно' })[task.repeat_interval]}`} title="Новые экземпляры больше не создадутся" onClick={() => setConfirmingRepeatStop(true)}>Повтор {({ daily: 'ежедневно', weekly: 'еженедельно', monthly: 'ежемесячно', yearly: 'ежегодно' })[task.repeat_interval]} · Остановить</button>}
-      </div>
-      {!editing && !completed && <button className="task-list-card__task-menu" type="button" draggable="true" aria-label="Перетащить задачу или изменить её название" title="Нажми для переименования, перетащи для сортировки" onClick={() => { if (!draggedRef.current) { setTitle(task.title); setEditing(true); } }} onDragStart={(event) => { draggedRef.current = true; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(task.id)); onDragStart(task.id); }} onDragEnd={() => { onDragEnd(); window.setTimeout(() => { draggedRef.current = false; }, 0); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>}
-      {!editing && task.is_completed && <button className="task-list-card__task-delete" type="button" aria-label={`Удалить выполненную задачу «${task.title}»`} title="Удалить выполненную задачу" onClick={onDelete}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></svg></button>}
-    </div>
-    {error && <p className="task-list-card__error" role="alert">{error}</p>}
-    {confirmingRepeatStop && <ListDeleteDialog id={`stop-repeat-title-${task.id}`} title="Остановить повторение?" error={error} busy={stoppingRepeat} busyLabel="Останавливаем…" confirmLabel="Остановить" onClose={() => { if (!stoppingRepeat) { setConfirmingRepeatStop(false); setError(''); } }} onConfirm={stopRepeat} theme={document.querySelector?.('.workspace-shell')?.dataset.theme}>
-      Новые экземпляры задачи «{task.title}» больше не будут создаваться. Уже созданные задачи останутся.
-    </ListDeleteDialog>}
-  </li>;
-}
-
-function ListCard({ list, tasks, flags, csrfToken, onChange, onDeleted, onFlagCreated, onTogglePin, dragHandle, isFullscreen = false }) {
-  const [taskName, setTaskName] = useState('');
-  const [taskDescription, setTaskDescription] = useState('');
-  const [taskImportant, setTaskImportant] = useState(false);
-  const [taskUrgency, setTaskUrgency] = useState(0);
-  const [taskUrgencyOpen, setTaskUrgencyOpen] = useState(false);
-  const [taskFlagId, setTaskFlagId] = useState('');
-  const [taskNewFlagName, setTaskNewFlagName] = useState('');
-  const [taskDueDate, setTaskDueDate] = useState(null);
-  const [taskLocation, setTaskLocation] = useState('');
-  const [taskDeadline, setTaskDeadline] = useState(null);
-  const [taskRepeat, setTaskRepeat] = useState(null);
-  const [taskLocationOpen, setTaskLocationOpen] = useState(false);
-  const [taskDescriptionOpen, setTaskDescriptionOpen] = useState(false);
-  const [taskMoreOptionsOpen, setTaskMoreOptionsOpen] = useState(false);
-  const [taskFlagOpen, setTaskFlagOpen] = useState(false);
-  const [taskDateOpen, setTaskDateOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [taskDeleteTarget, setTaskDeleteTarget] = useState(null);
-  const [deletingTask, setDeletingTask] = useState(false);
-  const [taskDeleteError, setTaskDeleteError] = useState('');
-  const [pinning, setPinning] = useState(false);
-  const [animatingTasks, setAnimatingTasks] = useState(() => new Set());
-  const [draggingTaskId, setDraggingTaskId] = useState(null);
-  const [name, setName] = useState(list.name);
-  const [description, setDescription] = useState(list.description || '');
-  const [cardTheme, setCardTheme] = useState(list.theme);
-  const [flagId, setFlagId] = useState(list.flag?.id || '');
-  const [newFlagName, setNewFlagName] = useState('');
-  const [creatingFlag, setCreatingFlag] = useState(false);
-  const [showDone, setShowDone] = useState(false);
-  const [error, setError] = useState('');
-  const descriptionRef = useRef(null);
-  const articleRef = useRef(null);
-  const deletingRef = useRef(false);
-  const deletingTaskRef = useRef(false);
-  const addingTaskRef = useRef(false);
-  const pendingToggles = useRef(new Set());
-  const savingDetailsRef = useRef(false);
-  const [addingTask, setAddingTask] = useState(false);
-  const [taskEntryOpen, setTaskEntryOpen] = useState(false);
-  const [savingDetails, setSavingDetails] = useState(false);
-  const taskEntryRef = useRef(null);
-  const taskTriggerRef = useRef(null);
-  const taskInlineComposerRef = useRef(null);
-  const taskOptionsRef = useRef(null);
-  const pending = tasks.filter((task) => !task.is_completed);
-  const completed = tasks.filter((task) => task.is_completed);
-  const draftFlag = taskNewFlagName.trim()
-    ? { name: taskNewFlagName.trim(), color: 'blue' }
-    : flags.find((flag) => String(flag.id) === String(taskFlagId));
-
-  function resetTaskDraft() {
-    setTaskName('');
-    setTaskDescription('');
-    setTaskImportant(false);
-    setTaskUrgency(0);
-    setTaskUrgencyOpen(false);
-    setTaskFlagId('');
-    setTaskNewFlagName('');
-    setTaskDueDate(null);
-    setTaskLocation('');
-    setTaskDeadline(null);
-    setTaskRepeat(null);
-    setTaskLocationOpen(false);
-    setTaskDescriptionOpen(false);
-    setTaskMoreOptionsOpen(false);
-    setTaskFlagOpen(false);
-    setTaskDateOpen(false);
-  }
-
-  function closeTaskPropertyPopovers(except = null) {
-    const keepOptionsOpen = ['options', 'urgency', 'annotation', 'location', 'flag', 'date'].includes(except);
-    if (!keepOptionsOpen) setTaskMoreOptionsOpen(false);
-    if (except !== 'urgency') setTaskUrgencyOpen(false);
-    if (except !== 'location') setTaskLocationOpen(false);
-    if (except !== 'flag') setTaskFlagOpen(false);
-    if (except !== 'date') setTaskDateOpen(false);
-  }
-
-  function toggleTaskOptions() {
-    const open = !taskMoreOptionsOpen;
-    closeTaskPropertyPopovers(open ? 'options' : null);
-    setTaskMoreOptionsOpen(open);
-  }
-
-  function closeTaskComposer() {
-    if (addingTaskRef.current) return;
-    setTaskEntryOpen(false);
-    resetTaskDraft();
-  }
-
-  useEffect(() => {
-    if (!taskEntryOpen) return undefined;
-    const body = document.body;
-    const previous = {
-      overflow: body.style.overflow,
-      position: body.style.position,
-      top: body.style.top,
-      left: body.style.left,
-      right: body.style.right,
-      width: body.style.width,
-    };
-    const mobileOverlay = !isFullscreen && window.matchMedia('(max-width: 700px)').matches;
-    const scrollTop = window.scrollY;
-    if (!isFullscreen) {
-      body.style.overflow = 'hidden';
-      if (mobileOverlay) {
-        body.style.position = 'fixed';
-        body.style.top = `-${scrollTop}px`;
-        body.style.left = '0';
-        body.style.right = '0';
-        body.style.width = '100%';
-      }
-    }
-    taskEntryRef.current?.focus({ preventScroll: true });
-    function closeOnEscape(event) {
-      if (event.key === 'Escape' && !addingTaskRef.current) {
-        event.preventDefault();
-        closeTaskComposer();
-      }
-    }
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('keydown', closeOnEscape);
-      if (!isFullscreen) {
-        Object.assign(body.style, previous);
-        if (mobileOverlay) window.scrollTo(0, scrollTop);
-      }
-      if (taskTriggerRef.current?.isConnected) taskTriggerRef.current.focus({ preventScroll: true });
-    };
-  }, [taskEntryOpen, isFullscreen]);
-
-  useEffect(() => {
-    if (!taskMoreOptionsOpen && !taskFlagOpen && !taskDateOpen) return undefined;
-    function closeTaskOptions(event) {
-      if (taskOptionsRef.current?.contains(event.target)) return;
-      closeTaskPropertyPopovers();
-    }
-    document.addEventListener('pointerdown', closeTaskOptions);
-    return () => document.removeEventListener('pointerdown', closeTaskOptions);
-  }, [taskMoreOptionsOpen, taskFlagOpen, taskDateOpen]);
-
-  useEffect(() => {
-    if (editing) return;
-    setName(list.name);
-    setDescription(list.description || '');
-    setCardTheme(list.theme);
-    setFlagId(list.flag?.id || '');
-    setNewFlagName('');
-  }, [editing, list.name, list.description, list.theme, list.flag?.id]);
-
-  useEffect(() => {
-    if (!editing || !descriptionRef.current) return;
-    descriptionRef.current.style.height = 'auto';
-    descriptionRef.current.style.height = `${descriptionRef.current.scrollHeight}px`;
-  }, [editing, description]);
-
-  async function addTask(event) {
-    event.preventDefault();
-    if (!taskName.trim() || addingTaskRef.current) return;
-    addingTaskRef.current = true;
-    setAddingTask(true);
-    try {
-      const result = await updateWorkspace({
-        action: 'create_task', list_id: list.id, title: taskName.trim(),
-        description: taskDescription.trim(), is_important: taskImportant, urgency: taskUrgency,
-        flag_id: taskFlagId || null, new_flag_name: taskNewFlagName.trim(), due_date: taskDueDate,
-        location: taskLocation.trim() || null, deadline: taskDeadline, repeat_interval: taskRepeat,
-      }, csrfToken);
-      if (result.task.flag) onFlagCreated({ ...result.task.flag, board_id: list.board_id });
-      resetTaskDraft();
-      setTaskEntryOpen(false);
-      await onChange();
-    } catch (err) { setError(err.message); }
-    finally { addingTaskRef.current = false; setAddingTask(false); }
-  }
-
-  async function toggleTask(task) {
-    if (pendingToggles.current.has(task.id)) return;
-    pendingToggles.current.add(task.id);
-    const isCompleting = !task.is_completed;
-    if (isCompleting) {
-      setAnimatingTasks((current) => new Set(current).add(task.id));
-    }
-    try {
-      await updateWorkspace({ action: 'toggle_task', task_id: task.id, is_completed: !task.is_completed }, csrfToken);
-      if (isCompleting) await new Promise((resolve) => window.setTimeout(resolve, 320));
-      await onChange();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      pendingToggles.current.delete(task.id);
-      if (isCompleting) setAnimatingTasks((current) => {
-        const next = new Set(current);
-        next.delete(task.id);
-        return next;
-      });
-    }
-  }
-
-  async function reorderTask(taskId, targetTaskId) {
-    try {
-      await updateWorkspace({ action: 'reorder_task', task_id: taskId, target_task_id: targetTaskId }, csrfToken);
-      await onChange();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function saveDetails(event) {
-    event.preventDefault();
-    if (savingDetailsRef.current) return;
-    savingDetailsRef.current = true;
-    setSavingDetails(true);
-    setError('');
-    try {
-      const saved = await updateWorkspace({ action: 'update_list', list_id: list.id, name, description, theme: cardTheme, flag_id: flagId || null, new_flag_name: newFlagName.trim(), is_important: list.is_important }, csrfToken);
-      setFlagId(saved.flag?.id || '');
-      setNewFlagName('');
-      setEditing(false);
-      await onChange();
-    } catch (err) { setError(err.message); }
-    finally { savingDetailsRef.current = false; setSavingDetails(false); }
-  }
-
-  async function createFlag(event) {
-    event.preventDefault();
-    const trimmedName = newFlagName.trim();
-    if (!trimmedName) return;
-    const details = event.currentTarget.closest('details');
-    setCreatingFlag(true);
-    setError('');
-    try {
-      const { flag } = await updateWorkspace({ action: 'create_flag', board_id: list.board_id, name: trimmedName }, csrfToken);
-      onFlagCreated(flag);
-      setFlagId(flag.id);
-      setNewFlagName('');
-      details.open = false;
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCreatingFlag(false);
-    }
-  }
-
-  async function handleDeleteList() {
-    if (deletingRef.current) return;
-    deletingRef.current = true;
-    setDeleting(true);
-    setError('');
-    try {
-      await deleteTaskList(list.id, csrfToken);
-      setConfirmingDelete(false);
-      onDeleted(list);
-      await onChange();
-    } catch (err) {
-      if (err.status === 404 && err.isApiError) {
-        setConfirmingDelete(false);
-        onDeleted(list, true);
-        await onChange();
-      } else {
-        setError(err.message);
-      }
-    } finally {
-      deletingRef.current = false;
-      setDeleting(false);
-    }
-  }
-
-  async function handleDeleteTask() {
-    if (!taskDeleteTarget || deletingTaskRef.current) return;
-    deletingTaskRef.current = true;
-    setDeletingTask(true);
-    setTaskDeleteError('');
-    try {
-      await updateWorkspace({ action: 'delete_task', task_id: taskDeleteTarget.id }, csrfToken);
-      setTaskDeleteTarget(null);
-      await onChange();
-    } catch (err) {
-      setTaskDeleteError(err.message);
-    } finally {
-      deletingTaskRef.current = false;
-      setDeletingTask(false);
-    }
-  }
-
-  async function handleTogglePin() {
-    setPinning(true);
-    setError('');
-    try {
-      await onTogglePin(list, !list.is_pinned);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setPinning(false);
-    }
-  }
-
-  return <>
-  <article ref={articleRef} className={`task-list-card${editing ? ' is-editing' : ''}${list.is_pinned ? ' is-pinned' : ''}`} data-theme={editing ? cardTheme : list.theme}>
-    <header className="task-list-card__header">
-      {dragHandle && !editing && <button className={`task-list-card__drag-handle${list.is_pinned ? ' is-disabled' : ''}`} type="button" aria-label={list.is_pinned ? 'Список закреплён' : `Переместить список «${list.name}»`} title={list.is_pinned ? 'Сначала открепите список' : 'Перетащить список'} disabled={dragHandle.disabled} aria-disabled={list.is_pinned} onPointerDown={dragHandle.onPointerDown} onDragStart={(event) => event.preventDefault()}><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>}
-      <div className="task-list-card__created">
-          {list.is_important && <span className="task-list-card__important-badge" role="img" aria-label="Важный список"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.8 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3-1.1-6.3L3 9.4l6.2-.9L12 2.8Z" /></svg></span>}
-         <time dateTime={list.created_at}>{formatListCreatedAt(list.created_at)}</time>
-      </div>
-      <div className="task-list-card__actions">
-      {dragHandle?.onOpen && <button className="task-list-card__open-button" type="button" aria-label={`Открыть список «${list.name}»`} title="Открыть список" onClick={dragHandle.onOpen}>
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><path d="M8 8h8v8H8z"/></svg>
-      </button>}
-      <button className={`task-list-card__pin-button${list.is_pinned ? ' is-pinned' : ''}`} type="button" aria-label={list.is_pinned ? 'Открепить список' : 'Закрепить список'} aria-pressed={list.is_pinned} title={list.is_pinned ? 'Открепить список' : 'Закрепить список'} disabled={pinning || dragHandle?.locked} onClick={handleTogglePin}>
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l-1 5 3 3v2H6v-2l3-3-1-5Z"/><path d="M12 13v8"/></svg>
-      </button>
-      <button className="task-list-card__edit-button" type="button" aria-label="Изменить список" title="Изменить список" disabled={savingDetails} onClick={() => setEditing((value) => !value)}>
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
-      </button>
-      </div>
-    </header>
-    {editing ? <form onSubmit={saveDetails} className="task-list-card__edit">
-      <label className="task-list-card__field"><span>Название</span><input className="task-list-card__title-input" aria-label="Название списка" maxLength="80" value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <label className="task-list-card__field"><span>Описание</span><textarea ref={descriptionRef} aria-label="Описание списка" maxLength="2000" value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-      <div className="task-list-card__edit-toolbar">
-        <div className="list-theme-picker" role="group" aria-label="Цвет темы списка">{themes.map(([value, label]) => <button className={`list-theme-swatch${cardTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={cardTheme === value} key={value} onClick={() => setCardTheme(value)} />)}</div>
-      </div>
-      <div className="task-list-card__field"><span>Флаг</span><details className="flag-picker task-list-card__flag-picker"><summary className="list-option-button" aria-label="Изменить флаг списка"><FlagIcon color={newFlagName.trim() ? 'blue' : flags.find((item) => String(item.id) === String(flagId))?.color} /><span>{newFlagName ? 'Новый флаг' : flags.find((item) => String(item.id) === String(flagId))?.name || 'Без флага'}</span><svg className="task-list-card__flag-chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg></summary><div className="flag-picker__panel"><p className="flag-picker__title">Выберите флаг</p><button className={`flag-picker__choice${!flagId && !newFlagName ? ' is-selected' : ''}`} type="button" onClick={(event) => { setFlagId(''); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><span className="flag-picker__empty-icon" aria-hidden="true" />Без флага</button>{flags.map((flag) => <button className={`flag-picker__choice${String(flagId) === String(flag.id) && !newFlagName ? ' is-selected' : ''}`} type="button" key={flag.id} onClick={(event) => { setFlagId(flag.id); setNewFlagName(''); event.currentTarget.closest('details').open = false; }}><FlagIcon color={flag.color} /><span>{flag.name}</span></button>)}<label className="flag-picker__custom-label" htmlFor={`edit-flag-name-${list.id}`}>Или создайте новый</label><div className="flag-picker__create-row"><input className="flag-picker__custom-input" id={`edit-flag-name-${list.id}`} type="text" maxLength="40" placeholder="Название флага" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setFlagId(''); }} />{newFlagName.trim() && <button className="flag-picker__create-button" type="button" aria-label="Создать флаг" title="Создать флаг" disabled={creatingFlag} onClick={createFlag}><PlusIcon /></button>}</div></div></details></div>
-      {error && <p className="task-list-card__error" role="alert">{error}</p>}
-      <button type="button" className="task-list-card__delete-list" disabled={savingDetails} onClick={() => setConfirmingDelete(true)}>Удалить список</button>
-      <div className="task-list-card__edit-actions"><button type="button" className="task-list-card__cancel" disabled={savingDetails} onClick={() => setEditing(false)}>Отмена</button><button type="submit" disabled={savingDetails}>{savingDetails ? 'Сохраняем…' : 'Сохранить'}</button></div>
-    </form> : <>
-       <div className="task-list-card__intro"><div className="task-list-card__title-row"><h2>{list.name}</h2></div>{(list.flag || list.due_date) && <div className="task-list-card__meta-tags">{list.flag && <span className={`task-list-card__flag-tag is-${list.flag.color}`}>{list.flag.name}</span>}{list.due_date && <time className="task-list-card__due-date" dateTime={list.due_date}>{formatListDueDate(list.due_date)}</time>}</div>}{list.description && <p className="task-list-card__description">{list.description}</p>}</div>
-          <div className={`task-list-card__composer-anchor${taskEntryOpen && isFullscreen ? ' is-expanded' : ''}`}>
-            <form className="task-list-card__add" onSubmit={addTask}><input ref={taskTriggerRef} aria-label="Добавить новую задачу" placeholder="Добавить новую задачу" maxLength="240" value={taskName} disabled={addingTask} onClick={() => setTaskEntryOpen(true)} onChange={(event) => { setTaskName(event.target.value); if (event.target.value) setTaskEntryOpen(true); }} /><button type="submit" aria-label="Добавить задачу" disabled={addingTask}>Добавить</button></form>
-            {isFullscreen && <div ref={taskInlineComposerRef} className={`task-list-card__inline-composer${taskEntryOpen ? ' is-open' : ''}`} />}
-         </div>
-       {pending.length > 0 && <div className="task-list-card__section-label">ЗАДАЧИ</div>}
-        <ul className={`task-list-card__tasks${completed.length === 0 ? ' has-no-completed' : ''}`}>{pending.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={animatingTasks.has(task.id)} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} isFullscreen={isFullscreen} />)}</ul>
-       {completed.length > 0 && <footer className="task-list-card__completed"><button type="button" aria-expanded={showDone} onClick={() => setShowDone((value) => !value)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5"/></svg><span className="task-list-card__completed-label">{completedTasksLabel(completed.length)}</span></button>{showDone && <ul className="task-list-card__tasks is-completed">{completed.map((task) => <ListTask key={task.id} task={task} csrfToken={csrfToken} onToggle={toggleTask} onChange={onChange} onReorder={reorderTask} onDelete={() => { setTaskDeleteTarget(task); setTaskDeleteError(''); }} animating={false} draggingTaskId={draggingTaskId} onDragStart={setDraggingTaskId} onDragEnd={() => setDraggingTaskId(null)} isFullscreen={isFullscreen} />)}</ul>}</footer>}
-      {error && <p role="alert" className="task-list-card__error">{error}</p>}
-    </>}
-  </article>
-  {taskEntryOpen && createPortal(<div className={isFullscreen ? 'task-create-overlay is-inline' : 'workspace-shell task-create-overlay'} data-theme={articleRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} onMouseDown={(event) => {
-    if (event.target === event.currentTarget) closeTaskComposer();
-  }}>
-    <form className={`task-create-dialog${isFullscreen ? ' task-create-dialog--inline' : ''}`} role="dialog" aria-modal={isFullscreen ? undefined : true} aria-label="Добавить новую задачу" onSubmit={addTask} onKeyDown={(event) => {
-      if (event.key === 'Tab') {
-        if (isFullscreen) return;
-        const controls = [...event.currentTarget.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])')]
-          .filter((control) => control.getClientRects().length > 0
-            && (!control.closest('details:not([open])') || control.tagName === 'SUMMARY'));
-        const index = controls.indexOf(document.activeElement);
-        if (event.shiftKey && index === 0) { event.preventDefault(); controls.at(-1)?.focus(); }
-        else if (!event.shiftKey && index === controls.length - 1) { event.preventDefault(); controls[0]?.focus(); }
-      }
-    }}>
-      {!isFullscreen && <h2 className="task-create-dialog__mobile-title">Новая задача</h2>}
-      <div className="task-create-dialog__name-row">
-        <button className="task-create-close" type="button" aria-label="Закрыть создание задачи" title="Закрыть" disabled={addingTask} onClick={closeTaskComposer}><PlusIcon /></button>
-         <div className="task-create-dialog__inline-field">
-            <span className="task-create-dialog__input-wrap"><span className="task-create-dialog__input-measure" aria-hidden="true">{taskName ? `${taskName} ` : 'Что нужно сделать?'}</span><input ref={taskEntryRef} aria-label="Название новой задачи" placeholder="Что нужно сделать?" enterKeyHint="done" maxLength="240" value={taskName} disabled={addingTask} onChange={(event) => setTaskName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent?.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /></span>
-           <TaskBadges flag={draftFlag} dueDate={taskDueDate} deadline={taskDeadline} urgency={taskUrgency} location={taskLocation.trim()} />
-         </div>
-         <button className="task-create-dialog__submit" type="submit" aria-label="Добавить задачу" disabled={addingTask || !taskName.trim()}><span className="task-create-dialog__submit-label">{addingTask ? 'Добавляем…' : 'Добавить'}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 5 5L19 7" /></svg></button>
-      </div>
-      <div ref={taskOptionsRef} className="task-create-dialog__options">
-         {taskDescriptionOpen && <div id={`task-annotation-${list.id}`} className="task-create-dialog__description"><textarea rows="2" aria-label="Текст аннотации" maxLength="2000" placeholder="Напишите аннотацию" value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} /></div>}
-          <div className={`list-creator__toolbar task-create-toolbar${taskMoreOptionsOpen ? ' is-more-open' : ''}`}>
-          <button className={`list-option-button task-create-important-button${taskImportant ? ' is-selected' : ''}`} type="button" aria-label={taskImportant ? uiText.task.removeImportant : uiText.task.markImportant} title="Важная задача" aria-pressed={taskImportant} onClick={() => setTaskImportant((value) => !value)}>
-            <StarIcon />
-          </button>
-          <button className="list-option-button list-creator__more task-create-more-button" type="button" aria-label={taskMoreOptionsOpen ? uiText.task.hideOptions : uiText.task.showOptions} aria-expanded={taskMoreOptionsOpen} aria-controls={`task-options-${list.id}`} onPointerDown={(event) => {
-            if (event.button === 0) toggleTaskOptions();
-          }} onClick={(event) => {
-            // Pointer presses already toggle on down; keyboard/assistive clicks toggle here.
-            if (!event || event.detail === 0) toggleTaskOptions();
-          }}><PlusIcon /></button>
-           <div id={`task-options-${list.id}`} className={`list-creator__extra-row task-create-menu${taskUrgencyOpen ? ' is-urgency-open' : ''}`} inert={!taskMoreOptionsOpen} aria-hidden={!taskMoreOptionsOpen} onKeyDown={(event) => {
-            if (event.key !== 'Escape') return;
-            event.preventDefault();
-            event.stopPropagation();
-            if (taskUrgencyOpen) {
-              setTaskUrgencyOpen(false);
-              taskOptionsRef.current?.querySelector('.task-urgency-picker')?.focus();
-            } else if (taskLocationOpen) {
-              closeTaskPropertyPopovers('options');
-              taskOptionsRef.current?.querySelector('[aria-label="Локация"]')?.focus();
-            } else {
-              setTaskMoreOptionsOpen(false);
-              taskOptionsRef.current?.querySelector('.task-create-more-button')?.focus();
-            }
-          }}>
-            <div className="task-create-menu__main">
-              <div className="task-create-property">
-               <button className={`list-option-button task-create-property-button task-urgency-picker${taskUrgency ? ` is-selected is-level-${taskUrgency}` : ''}`} type="button" aria-label={uiText.task.chooseUrgency} title={uiText.task.urgency} aria-pressed={taskUrgency > 0} aria-expanded={taskUrgencyOpen} aria-controls={`task-urgency-${list.id}`} onClick={() => {
-                const open = !taskUrgencyOpen;
-                closeTaskPropertyPopovers(open ? 'urgency' : 'options');
-                setTaskUrgencyOpen(open);
-              }}><span className="task-urgency-picker__mark">{taskUrgencyLevels[taskUrgency - 1]?.mark || '!'}</span><span>Срочность</span><svg className="task-urgency-picker__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg></button>
-              {taskUrgencyOpen && <div id={`task-urgency-${list.id}`} className="task-urgency-picker__panel" role="group" aria-label="Уровень срочности">
-                {taskUrgencyLevels.map((level) => <button className={`flag-picker__choice task-urgency-picker__choice is-level-${level.value}${taskUrgency === level.value ? ' is-selected' : ''}`} type="button" key={level.value} aria-pressed={taskUrgency === level.value} onClick={() => { setTaskUrgency((current) => current === level.value ? 0 : level.value); setTaskUrgencyOpen(false); taskOptionsRef.current?.querySelector('.task-urgency-picker')?.focus(); }}><span className="task-urgency-picker__mark">{level.mark}</span><span>{level.label}</span></button>)}
-            </div>}
-              </div>
-                <button className={`list-option-button task-create-property-button task-create-menu__toggle${taskDescriptionOpen ? ' is-open' : ''}${taskDescription.trim() ? ' is-selected' : ''}`} type="button" aria-label="Аннотация" title="Аннотация" aria-expanded={taskDescriptionOpen} aria-controls={`task-annotation-${list.id}`} onClick={() => {
-                const open = !taskDescriptionOpen;
-                closeTaskPropertyPopovers(open ? 'annotation' : 'options');
-                setTaskDescriptionOpen(open);
-              }}><span className="task-create-menu__icon"><AnnotationIcon /></span><span>Аннотация</span></button>
-              <div className="task-create-property">
-                <button className={`list-option-button task-create-property-button task-create-menu__toggle${taskLocationOpen ? ' is-open' : ''}${taskLocation.trim() ? ' is-selected' : ''}`} type="button" aria-label="Локация" title="Локация" aria-expanded={taskLocationOpen} aria-controls={`task-location-${list.id}`} onClick={() => {
-                const open = !taskLocationOpen;
-                closeTaskPropertyPopovers(open ? 'location' : 'options');
-                setTaskLocationOpen(open);
-              }}><span className="task-create-menu__icon"><LocationIcon /></span><span className="task-create-menu__label">Локация</span><svg className="task-create-menu__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg></button>
-              {taskLocationOpen && <div id={`task-location-${list.id}`} className="task-create-menu__field"><input aria-label="Указать локацию" maxLength="160" placeholder="Введите локацию" value={taskLocation} onChange={(event) => setTaskLocation(event.target.value)} /></div>}
-              </div>
-            </div>
-          </div>
-           <div className={`flag-picker${taskFlagOpen ? ' is-open' : ''}`} onKeyDown={(event) => {
-             if (event.key !== 'Escape' || !taskFlagOpen) return;
-             event.preventDefault();
-             event.stopPropagation();
-             setTaskFlagOpen(false);
-             event.currentTarget.querySelector('.task-create-property-button')?.focus();
-           }}>
-             <button className={`list-option-button task-create-property-button${taskFlagId || taskNewFlagName.trim() ? ' is-selected' : ''}`} type="button" aria-label="Назначить флаг задаче" title={draftFlag?.name || 'Флаг задачи'} aria-expanded={taskFlagOpen} aria-controls={`task-flags-${list.id}`} onClick={() => {
-               closeTaskPropertyPopovers('flag');
-               setTaskFlagOpen((open) => !open);
-             }}><FlagIcon color={draftFlag?.color} /><span className="flag-picker__selected-label">{draftFlag?.name || 'Флаг'}</span></button>
-             <div id={`task-flags-${list.id}`} className="flag-picker__panel" hidden={!taskFlagOpen}>
-              <p className="flag-picker__title">Выберите флаг</p>
-               <button className={`flag-picker__choice${!taskFlagId && !taskNewFlagName ? ' is-selected' : ''}`} type="button" aria-pressed={!taskFlagId && !taskNewFlagName} onClick={() => { setTaskFlagId(''); setTaskNewFlagName(''); setTaskFlagOpen(false); }}>Без флага</button>
-               <div className="flag-picker__existing">{flags.map((flag) => <button className={`flag-picker__choice${String(taskFlagId) === String(flag.id) && !taskNewFlagName ? ' is-selected' : ''}`} type="button" key={flag.id} aria-pressed={String(taskFlagId) === String(flag.id) && !taskNewFlagName} onClick={() => { setTaskFlagId(flag.id); setTaskNewFlagName(''); setTaskFlagOpen(false); }}><FlagIcon color={flag.color} /><span>{flag.name}</span></button>)}</div>
-               {flags.length === 0 && <p className="task-create-flag-empty">Флагов пока нет — создайте первый ниже.</p>}
-              <label className="flag-picker__custom-label" htmlFor={`task-flag-name-${list.id}`}>Или создайте свой</label>
-               <div className="flag-picker__create-row"><input className="flag-picker__custom-input" id={`task-flag-name-${list.id}`} maxLength="40" placeholder="Название флага" value={taskNewFlagName} onChange={(event) => { setTaskNewFlagName(event.target.value); setTaskFlagId(''); }} /></div>
-            </div>
-           </div>
-          <div className="list-creator__date"><ListDatePicker value={taskDueDate} open={taskDateOpen} onOpenChange={(open) => {
-            if (open) closeTaskPropertyPopovers('date');
-            setTaskDateOpen(open);
-           }} onChange={(date) => { setTaskDueDate(date); if (date) setTaskDeadline(null); }} deadline={taskDeadline} onDeadlineChange={(date) => { setTaskDeadline(date); if (date) setTaskDueDate(null); }} repeat={taskRepeat} onRepeatChange={setTaskRepeat} label="Дата" /></div>
-         </div>
-      </div>
-    </form>
-    {error && <p className="task-create-error" role="alert">{error}</p>}
-  </div>, isFullscreen ? taskInlineComposerRef.current || document.body : document.body)}
-  {confirmingDelete && <ListDeleteDialog id={`delete-list-title-${list.id}`} title="Удалить список?" error={error} busy={deleting} confirmLabel="Удалить" onClose={() => setConfirmingDelete(false)} onConfirm={handleDeleteList} theme={articleRef.current?.closest('.workspace-shell')?.dataset.theme}>
-    Вы точно хотите удалить этот список?
-  </ListDeleteDialog>}
-  {taskDeleteTarget && <ListDeleteDialog id={`delete-task-title-${taskDeleteTarget.id}`} title="Удалить выполненную задачу?" error={taskDeleteError} busy={deletingTask} confirmLabel="Удалить задачу" onClose={() => setTaskDeleteTarget(null)} onConfirm={handleDeleteTask} theme={articleRef.current?.closest('.workspace-shell')?.dataset.theme}>
-    «{taskDeleteTarget.title}» будет удалена без возможности восстановления. Удалённые задачи не учитываются в продуктивности и общем количестве выполненных задач.
-  </ListDeleteDialog>}
-  </>;
-}
-
 export function Workspace() {
   const [registrationArrival, setRegistrationArrival] = useState(() => {
     try { return window.sessionStorage.getItem('todo-inn-registration-arrival') === '1'; } catch { return false; }
@@ -625,8 +41,6 @@ export function Workspace() {
   });
   const [systemTheme, setSystemTheme] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   const theme = themePreference === 'system' ? systemTheme : themePreference;
-  const holidayAudioRef = useRef(null);
-  const [holidayPlaying, setHolidayPlaying] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [moreListOptionsOpen, setMoreListOptionsOpen] = useState(false);
@@ -1219,7 +633,6 @@ export function Workspace() {
         github_url: profile.github_url || '',
         telegram_url: profile.telegram_url || '',
         preferred_theme: profile.preferred_theme || 'system',
-        account_type: profile.account_type,
         avatar: profile.avatar,
         current_password: '',
         new_password: '',
@@ -1261,9 +674,14 @@ export function Workspace() {
     setProfileSaving(true);
     setProfileError('');
     const data = { ...profileDraft };
+    delete data.account_type;
     if (!avatarChanged) delete data.avatar;
     try {
-      const { profile } = await updateProfile(data, csrfToken);
+      const { profile, signed_out: signedOut } = await updateProfile(data, csrfToken);
+      if (signedOut) {
+        window.location.assign('/');
+        return;
+      }
       setAccount(profile);
       setThemePreference(profile.preferred_theme || 'system');
       setProfileDraft({
@@ -1300,46 +718,16 @@ export function Workspace() {
     if (filter.startsWith('flag:')) return String(list.flag?.id) === filter.slice(5);
     return true;
   });
-  const canChangeUsername = !profileDraft?.username_change_available_at
-    || Date.parse(profileDraft.username_change_available_at) <= Date.now();
   const manageableCorporateAccounts = corporateAccounts.filter((item) => item.role === 'owner');
   const canManageBoard = (item) => !item.corporate_account_id
     || corporateAccounts.some((organization) => organization.id === item.corporate_account_id && organization.role === 'owner');
-
-  async function toggleHolidayAudio() {
-    const audio = holidayAudioRef.current;
-    if (!audio) return;
-    if (!audio.paused) {
-      audio.pause();
-      setHolidayPlaying(false);
-      return;
-    }
-    try {
-      await audio.play();
-      setHolidayPlaying(true);
-    } catch {
-      setHolidayPlaying(false);
-    }
-  }
 
   return (
     <div className={`workspace-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}${mobileMenuOpen ? ' is-mobile-menu-open' : ''}${registrationArrival ? ' is-registration-arrival' : ''}`} data-theme={theme}>
       <header className="workspace-header">
         <div className="workspace-header__left">
           <button className="mobile-menu-toggle" type="button" aria-label={mobileMenuOpen ? 'Закрыть меню фильтров' : 'Открыть меню фильтров'} aria-controls="workspace-sidebar" aria-expanded={mobileMenuOpen} onClick={() => { setSidebarCollapsed(false); setMobileMenuOpen((current) => !current); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-          <button className={`workspace-holiday-ribbon${holidayPlaying ? ' is-playing' : ''}`} type="button" aria-label={holidayPlaying ? 'Приостановить праздничную музыку' : 'Воспроизвести праздничную музыку'} aria-pressed={holidayPlaying} onClick={toggleHolidayAudio} title="День народного единства — нажмите, чтобы включить музыку">
-            <svg viewBox="0 0 600 76" preserveAspectRatio="none" aria-hidden="true">
-              <defs>
-                <linearGradient id="holiday-ribbon-light" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor="#f8f9fc" /><stop offset=".36" stopColor="#fff" /><stop offset=".7" stopColor="#e8edf5" /><stop offset="1" stopColor="#fff" /></linearGradient>
-                <linearGradient id="holiday-ribbon-blue" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor="#0039a6" /><stop offset=".36" stopColor="#1455b6" /><stop offset=".7" stopColor="#002c88" /><stop offset="1" stopColor="#1352af" /></linearGradient>
-                <linearGradient id="holiday-ribbon-red" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor="#d52b1e" /><stop offset=".36" stopColor="#e44938" /><stop offset=".7" stopColor="#be241e" /><stop offset="1" stopColor="#df3c31" /></linearGradient>
-              </defs>
-              <path d="M0 9 C114 2 201 16 302 9 S482 13 600 4 L582 25 C469 31 387 19 302 29 S110 24 0 34 Z" fill="url(#holiday-ribbon-light)" />
-              <path d="M0 34 C110 24 207 38 302 29 S469 31 582 25 L562 47 C454 51 390 40 302 51 S110 45 0 58 Z" fill="url(#holiday-ribbon-blue)" />
-              <path d="M0 58 C110 45 207 62 302 51 S454 51 562 47 L600 65 C484 58 395 70 302 73 S103 65 0 76 Z" fill="url(#holiday-ribbon-red)" />
-            </svg>
-          </button>
-          <audio ref={holidayAudioRef} src={holidayAudio} preload="auto" onEnded={() => setHolidayPlaying(false)} />
+          <ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} />
         </div>
 
         <label className="workspace-search">
@@ -1348,7 +736,6 @@ export function Workspace() {
         </label>
 
         <div className="workspace-header__right">
-          <ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} />
           <div className="workspace-header__notifications"><NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} /></div>
 
           <details className="profile-menu">
@@ -1477,7 +864,7 @@ export function Workspace() {
                     </div>
 
                     <div className="list-theme-picker" role="group" aria-label="Цвет темы списка">
-                      {themes.map(([value, label]) => (
+                      {listThemes.map(([value, label]) => (
                         <button className={`list-theme-swatch${selectedTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={selectedTheme === value} key={value} onClick={() => setSelectedTheme(value)} />
                       ))}
                     </div>
@@ -1566,19 +953,16 @@ export function Workspace() {
               <span className="profile-settings-dialog__avatar">{profileDraft.avatar ? <img src={profileDraft.avatar} alt="Аватар профиля" /> : <UserIcon />}</span>
               <div><strong>Фото профиля</strong><p>JPEG, PNG или WebP, до 1 МБ</p><div className="profile-settings-dialog__avatar-actions"><label className="profile-settings-dialog__file-button">{profileDraft.avatar ? 'Изменить фото' : 'Загрузить фото'}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarFile} /></label>{profileDraft.avatar && <button type="button" onClick={() => { setProfileDraft((current) => ({ ...current, avatar: null })); setAvatarChanged(true); }}>Удалить</button>}</div></div>
             </section>
-            <label className="profile-settings-dialog__field"><span>Логин</span><input required maxLength="24" pattern="(?:[A-Za-z][A-Za-z0-9_@-]{3,23}|@[A-Za-z][A-Za-z0-9_-]{2,22})" value={profileDraft.username} disabled={!canChangeUsername} onChange={(event) => setProfileDraft((current) => ({ ...current, username: event.target.value }))} />{!canChangeUsername && <small>Логин можно будет изменить после {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(profileDraft.username_change_available_at))}.</small>}<small>Логин также используется для входа.</small></label>
+            <label className="profile-settings-dialog__field"><span>Логин</span><input value={profileDraft.username} disabled title="Изменение логина временно недоступно" /><small>Логин также используется для входа.</small></label>
             <div className="profile-settings-dialog__two-columns">
-              <label className="profile-settings-dialog__field"><span>Основная почта</span><input type="email" maxLength="254" autoComplete="email" value={profileDraft.email} onChange={(event) => setProfileDraft((current) => ({ ...current, email: event.target.value }))} placeholder="name@example.com" /></label>
-              <label className="profile-settings-dialog__field"><span>Дополнительная почта</span><input type="email" maxLength="254" autoComplete="email" value={profileDraft.secondary_email} onChange={(event) => setProfileDraft((current) => ({ ...current, secondary_email: event.target.value }))} placeholder="name@example.com" /></label>
+              <label className="profile-settings-dialog__field"><span>Основная почта</span><input type="email" maxLength="254" autoComplete="email" value={profileDraft.email} disabled title="Изменение почты временно недоступно" placeholder="name@example.com" /></label>
+              <label className="profile-settings-dialog__field"><span>Дополнительная почта</span><input type="email" maxLength="254" autoComplete="email" value={profileDraft.secondary_email} disabled title="Изменение почты временно недоступно" placeholder="name@example.com" /></label>
             </div>
             <label className="profile-settings-dialog__field"><span>О себе</span><textarea maxLength="1200" value={profileDraft.about} onChange={(event) => setProfileDraft((current) => ({ ...current, about: event.target.value }))} placeholder="Расскажите немного о себе" /></label>
             <label className="profile-settings-dialog__field"><span>GitHub</span><span className="profile-settings-social"><svg className="is-github" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.56.1.76-.24.76-.54v-2.08c-3.1.67-3.76-1.32-3.76-1.32-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.68.08-.68 1.12.08 1.71 1.15 1.71 1.15 1 1.7 2.61 1.21 3.25.93.1-.72.39-1.21.71-1.49-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .94-.3 3.06 1.15a10.6 10.6 0 0 1 5.57 0c2.12-1.45 3.05-1.15 3.05-1.15.61 1.54.23 2.68.12 2.96.71.78 1.14 1.78 1.14 3.01 0 4.29-2.62 5.23-5.11 5.5.4.35.75 1.03.75 2.08v3.09c0 .3.2.65.77.54A11.1 11.1 0 0 0 12 .9Z"/></svg><input type="url" maxLength="255" value={profileDraft.github_url} onChange={(event) => setProfileDraft((current) => ({ ...current, github_url: event.target.value }))} placeholder="https://github.com/username" /></span></label>
             <label className="profile-settings-dialog__field"><span>Telegram</span><span className="profile-settings-social"><svg className="is-telegram" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.7 3.3 18.5 20c-.24 1.18-.87 1.47-1.76.91l-4.86-3.58-2.35 2.26c-.26.26-.48.48-.98.48l.35-4.94 8.99-8.12c.39-.35-.08-.55-.6-.2L6.17 13.87l-4.8-1.5c-1.04-.33-1.06-1.04.22-1.55L20.38 3.1c.86-.32 1.61.2 1.33.2Z"/></svg><input type="url" maxLength="255" value={profileDraft.telegram_url} onChange={(event) => setProfileDraft((current) => ({ ...current, telegram_url: event.target.value }))} placeholder="https://t.me/username" /></span></label>
             <label className="profile-settings-dialog__field"><span>Тема по умолчанию</span><select value={profileDraft.preferred_theme} onChange={(event) => setProfileDraft((current) => ({ ...current, preferred_theme: event.target.value }))}><option value="light">Светлая</option><option value="dark">Тёмная</option><option value="system">Как в системе</option></select></label>
-            <fieldset className="profile-settings-dialog__account-type type-choice-grid"><legend>Тип аккаунта</legend><div>{[
-              ['individual', 'Личный'], ['team', 'Для команды'], ['corporate', 'Корпоративный'],
-            ].map(([value, label]) => <label className={`type-choice${profileDraft.account_type === value ? ' is-selected' : ''}`} key={value}><input type="radio" name="profile-account-type" value={value} checked={profileDraft.account_type === value} onChange={(event) => setProfileDraft((current) => ({ ...current, account_type: event.target.value }))} /><BoardTypeIcon type={value === 'team' ? 'community' : value} /><span>{label}</span></label>)}</div></fieldset>
-            <details className="profile-settings-dialog__password"><summary>Изменить пароль</summary><div className="profile-settings-dialog__password-fields"><label className="profile-settings-dialog__field"><span>Текущий пароль</span><input type="password" autoComplete="current-password" value={profileDraft.current_password} onChange={(event) => setProfileDraft((current) => ({ ...current, current_password: event.target.value }))} /></label><div className="profile-settings-dialog__two-columns"><label className="profile-settings-dialog__field"><span>Новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.new_password} onChange={(event) => setProfileDraft((current) => ({ ...current, new_password: event.target.value }))} /></label><label className="profile-settings-dialog__field"><span>Повторите новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.confirm_password} onChange={(event) => setProfileDraft((current) => ({ ...current, confirm_password: event.target.value }))} /></label></div></div></details>
+            <details className="profile-settings-dialog__password"><summary>Изменить пароль</summary><div className="profile-settings-dialog__password-fields"><p>После смены пароля потребуется войти заново на всех устройствах.</p><label className="profile-settings-dialog__field"><span>Текущий пароль</span><input type="password" autoComplete="current-password" value={profileDraft.current_password} onChange={(event) => setProfileDraft((current) => ({ ...current, current_password: event.target.value }))} /></label><div className="profile-settings-dialog__two-columns"><label className="profile-settings-dialog__field"><span>Новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.new_password} onChange={(event) => setProfileDraft((current) => ({ ...current, new_password: event.target.value }))} /></label><label className="profile-settings-dialog__field"><span>Повторите новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.confirm_password} onChange={(event) => setProfileDraft((current) => ({ ...current, confirm_password: event.target.value }))} /></label></div></div></details>
             {profileError && <p className="profile-settings-dialog__error" role="alert">{profileError}</p>}
             <div className="profile-settings-dialog__actions"><button type="button" onClick={() => setProfileSettingsOpen(false)} disabled={profileSaving}>Отмена</button><button type="submit" disabled={profileSaving}>{profileSaving ? 'Сохраняем…' : 'Сохранить настройки'}</button></div>
           </form>}

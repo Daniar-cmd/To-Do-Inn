@@ -62,7 +62,7 @@ class AuthController
             'check_registration_email' => $this->checkRegistrationEmail($input),
             'check_login_email' => $this->checkLoginEmail($input),
             'request_password_reset' => $this->requestPasswordReset($input),
-            'reset_password' => $this->resetPassword($input),
+            'reset_password' => $this->resetPassword($request, $input),
             'get_notifications' => $this->getNotifications($request),
             'mark_notification_read' => $this->markNotificationRead($request, $input),
             'legacy_account_status' => $this->legacyAccountStatus($request),
@@ -242,7 +242,7 @@ class AuthController
         return $this->success(['sent' => true]);
     }
 
-    private function resetPassword(#[\SensitiveParameter] array $input): JsonResponse
+    private function resetPassword(Request $request, #[\SensitiveParameter] array $input): JsonResponse
     {
         $token = $input['token'] ?? null;
         $password = $input['password'] ?? null;
@@ -269,8 +269,9 @@ class AuthController
         $tokenHash = hash('sha256', $token);
         $tokenKey = 'password-reset-token:'.$tokenHash;
         $emailKey = null;
+        $resetUserId = null;
         try {
-            $reset = Cache::lock('password-reset-lock:'.$tokenHash, 10)->block(5, function () use ($tokenKey, $tokenHash, $password, &$emailKey): bool {
+            $reset = Cache::lock('password-reset-lock:'.$tokenHash, 10)->block(5, function () use ($tokenKey, $tokenHash, $password, &$emailKey, &$resetUserId): bool {
                 $record = Cache::get($tokenKey);
                 if (!is_array($record) || !is_int($record['user_id'] ?? null) || !is_string($record['email'] ?? null)) {
                     return false;
@@ -284,12 +285,14 @@ class AuthController
                     }
 
                     $user->password_hash = Hash::make($password);
+                    $user->password_version = (int) $user->password_version + 1;
                     $user->save();
 
                     return true;
                 });
 
                 if ($updated) {
+                    $resetUserId = $record['user_id'];
                     $emailKey = 'password-reset-email:'.hash('sha256', $record['email']);
                     Cache::forget($tokenKey);
                     if (Cache::get($emailKey) === $tokenHash) {
@@ -305,6 +308,12 @@ class AuthController
 
         if (!$reset) {
             return $this->error(422, 'Ссылка недействительна или срок её действия истёк. Запросите новую.');
+        }
+
+        if (Auth::id() === $resetUserId) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
         }
 
         return $this->success(['reset' => true]);
@@ -525,6 +534,7 @@ class AuthController
                         'password_hash' => $passwordHash,
                         // Keep the existing User row as the private workspace identity so its
                         // boards and task ownership stay intact when a separate corporate root is created.
+                        // One-time legacy identity conversion; normal profile updates cannot change account type.
                         'account_type' => 'individual',
                         'registration_version' => 2,
                         'organization_type' => null,
@@ -616,7 +626,6 @@ class AuthController
                     'middle_name' => $data['middle_name'] ?? null,
                     'email' => strtolower($data['email']),
                     'password_hash' => $passwordHash,
-                    'account_type' => 'individual',
                     'secondary_email' => $secondaryEmail === '' ? null : $secondaryEmail,
                     'about' => trim((string) ($data['about'] ?? '')),
                     'github_url' => $githubUrl === '' ? null : $githubUrl,
@@ -627,6 +636,7 @@ class AuthController
                     'marketing_consent' => (bool) ($data['marketing_consent'] ?? false),
                     'marketing_consent_at' => ($data['marketing_consent'] ?? false) ? now() : null,
                 ]);
+                $user->refresh(); // Load the database default account type for the response/session.
                 if ($avatar['base64'] !== null) {
                     DB::update("UPDATE users SET avatar_data = decode(?, 'base64'), avatar_mime = ? WHERE id = ?", [
                         $avatar['base64'], $avatar['mime'], $user->id,
@@ -700,6 +710,7 @@ class AuthController
         if ($user instanceof User) {
             $request->session()->forget('corporate_root_account_id');
             Auth::login($user);
+            $request->session()->put('password_version', (int) $user->password_version);
         }
         $request->session()->forget('registration_verified_email');
         $request->session()->regenerateToken();
@@ -958,6 +969,7 @@ class AuthController
                 }
 
                 Auth::login($personalUser);
+                $request->session()->put('password_version', (int) $personalUser->password_version);
                 $request->session()->forget('corporate_root_account_id');
                 $request->session()->regenerateToken();
 
@@ -984,6 +996,7 @@ class AuthController
 
                 if ($legacyCorporateUser !== null && Hash::check($password, $legacyCorporateUser->getAuthPassword())) {
                     Auth::login($legacyCorporateUser);
+                    $request->session()->put('password_version', (int) $legacyCorporateUser->password_version);
                     $request->session()->forget('corporate_root_account_id');
                     $request->session()->regenerateToken();
 
@@ -1001,6 +1014,7 @@ class AuthController
         }
 
         if (Auth::attempt(['username' => $username, 'password' => $password])) {
+            $request->session()->put('password_version', (int) Auth::user()->password_version);
             $request->session()->forget('corporate_root_account_id');
             $request->session()->regenerateToken();
 

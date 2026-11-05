@@ -63,6 +63,18 @@ test('JSON API errors release the pending session request too', async (t) => {
   assert.equal((await api.getSession()).csrf_token, 'recovered-token');
 });
 
+test('an expired workspace session returns to login on the next API request', async (t) => {
+  const previousWindow = globalThis.window;
+  let destination = null;
+  globalThis.window = { location: { pathname: '/pages/workspace.html', replace: (path) => { destination = path; } } };
+  t.after(() => { globalThis.window = previousWindow; });
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ success: false, error: 'Требуется войти в аккаунт.' }), { status: 401 }));
+
+  const api = await freshApi();
+  await assert.rejects(api.getWorkspace(), { status: 401 });
+  assert.equal(destination, '/');
+});
+
 test('list deletion sends only list_id and CSRF, sharing simultaneous requests', async (t) => {
   let finish;
   let count = 0;

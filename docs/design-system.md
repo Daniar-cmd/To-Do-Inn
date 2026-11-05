@@ -22,7 +22,7 @@
 | Иконки | `frontend/js/ui/icons.jsx` | Использовать готовую геометрию, без изменения штрихов |
 | Тексты интерфейса | `frontend/js/ui/text.js` | `uiText.actions.save`, `uiText.feedback.saving`, `uiText.task.showOptions` |
 | Палитры, размеры, время анимаций | `frontend/scss/_variables.scss` | `@use 'variables' as v` |
-| Кнопки, карточки, состояния, анимации | `frontend/scss/_workspace.scss` | Переиспользовать существующие классы |
+| Кнопки, карточки, состояния, анимации | `frontend/scss/workspace/` | Переиспользовать существующие классы; `_workspace.scss` подключает эти части по порядку |
 | Регистрация и CustomSelect | `frontend/scss/_auth.scss` | Сохранять существующий вариант регистрации |
 | Каталог примеров | `frontend/js/design-system/DesignSystem.jsx` | Только демонстрационное локальное состояние |
 | Раскладка каталога | `frontend/scss/design-system.scss` | Только оформление страницы библиотеки |

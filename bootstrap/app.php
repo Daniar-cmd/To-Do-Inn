@@ -3,6 +3,7 @@
 use App\Http\Middleware\PrepareAuthRequest;
 use App\Http\Middleware\PrepareProfileRequest;
 use App\Http\Middleware\PrepareWorkspaceRequest;
+use App\Http\Middleware\EnsureCurrentPasswordSession;
 use Illuminate\Database\QueryException;
 use App\Http\Middleware\VerifyApiCsrfToken;
 use Illuminate\Auth\AuthenticationException;
@@ -29,6 +30,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(null);
         $middleware->web(
             prepend: [PrepareAuthRequest::class],
+            append: [EnsureCurrentPasswordSession::class],
             replace: [PreventRequestForgery::class => VerifyApiCsrfToken::class],
         );
         // Authentication must precede profile's CSRF/body checks, and the body must be bounded before throttling.

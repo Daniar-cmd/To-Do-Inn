@@ -30,7 +30,12 @@ async function request(endpoint, { method = 'GET', data, csrfToken, signal } = {
     options.body = JSON.stringify(data);
   }
   if (csrfToken !== undefined) options.headers = { ...options.headers, 'X-CSRF-Token': csrfToken };
-  return readResponse(await fetch(endpoint, options));
+  const response = await fetch(endpoint, options);
+  if (response.status === 401 && typeof window !== 'undefined'
+      && window.location.pathname === '/pages/workspace.html') {
+    window.location.replace('/');
+  }
+  return readResponse(response);
 }
 
 export function getSession() {

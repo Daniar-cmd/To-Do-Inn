@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -81,35 +80,34 @@ class ProfileTest extends DatabaseTestCase
 
         $this->postProfile([
             'username' => ' '.$this->user->username.' ',
-            'email' => ' Person@Example.COM ', 'secondary_email' => ' Backup@Example.COM ',
-            'about' => ' Привет 👋 ', 'account_type' => 'corporate',
+            'about' => ' Привет 👋 ',
             'github_url' => 'https://github.com/profile-user', 'preferred_theme' => 'dark',
             'telegram_url' => 'https://t.me/profile_user',
-        ])->assertOk()->assertJsonPath('data.profile.email', 'person@example.com')
-            ->assertJsonPath('data.profile.secondary_email', 'backup@example.com')
+        ])->assertOk()->assertJsonPath('data.profile.email', null)
+            ->assertJsonPath('data.profile.secondary_email', null)
             ->assertJsonPath('data.profile.about', 'Привет 👋')
             ->assertJsonPath('data.profile.github_url', 'https://github.com/profile-user')
             ->assertJsonPath('data.profile.telegram_url', 'https://t.me/profile_user')
             ->assertJsonPath('data.profile.preferred_theme', 'dark')
-            ->assertJsonPath('data.profile.account_type', 'corporate')
+            ->assertJsonPath('data.profile.account_type', 'individual')
             ->assertJsonPath('data.profile.username_changed_at', null);
 
         $this->assertSame($hash, $this->user->fresh()->getAuthPassword());
         $this->assertSame($id, $this->app['session.store']->getId());
         $this->assertSame($token, $this->token());
         Auth::forgetGuards();
-        $this->getJson('/api/auth.php')->assertJsonPath('data.user.account_type', 'corporate');
+        $this->getJson('/api/auth.php')->assertJsonPath('data.user.account_type', 'individual');
     }
 
-    public function test_empty_or_null_optional_fields_become_the_legacy_defaults(): void
+    public function test_optional_fields_become_the_legacy_defaults_without_changing_email(): void
     {
         $this->user->update(['email' => 'person@example.com', 'secondary_email' => 'backup@example.com', 'about' => 'Old']);
 
         $this->postProfile([
-            'email' => null, 'secondary_email' => '  ', 'about' => null,
+            'about' => null,
             'current_password' => null, 'new_password' => null, 'confirm_password' => null,
-        ])->assertOk()->assertJsonPath('data.profile.email', null)
-            ->assertJsonPath('data.profile.secondary_email', null)
+        ])->assertOk()->assertJsonPath('data.profile.email', 'person@example.com')
+            ->assertJsonPath('data.profile.secondary_email', 'backup@example.com')
             ->assertJsonPath('data.profile.about', '');
     }
 
@@ -167,47 +165,26 @@ class ProfileTest extends DatabaseTestCase
             ->assertUnprocessable()->assertJsonPath('error', 'Основная и дополнительная почта должны различаться.');
     }
 
-    public function test_a_rename_updates_auth_and_exposes_the_next_allowed_time(): void
+    public function test_username_and_account_type_are_immutable_during_profile_updates(): void
     {
-        $response = $this->postProfile(['username' => 'RenamedUser'])->assertOk()
-            ->assertJsonPath('data.profile.username', 'RenamedUser');
-        $changed = CarbonImmutable::parse($response->json('data.profile.username_changed_at'));
-        $available = CarbonImmutable::parse($response->json('data.profile.username_change_available_at'));
-        $this->assertSame(86400, $available->getTimestamp() - $changed->getTimestamp());
+        $before = $this->state($this->user->id);
+        $this->postProfile(['username' => 'RenamedUser', 'about' => 'Must not be saved'])
+            ->assertForbidden()->assertJsonPath('error', 'Изменение логина временно недоступно.');
+        $this->assertSame($before, $this->state($this->user->id));
 
-        Auth::forgetGuards();
-        $this->getJson('/api/auth.php')->assertJsonPath('data.user.username', 'RenamedUser');
-        $this->postProfile(['username' => 'AnotherName', 'about' => 'Must not be saved'])
-            ->assertStatus(429)->assertJsonPath('error', 'Логин можно менять не чаще одного раза в 24 часа.');
-        $this->assertSame('RenamedUser', $this->user->fresh()->username);
-        $this->assertSame('', $this->user->fresh()->about);
+        $this->postProfile(['account_type' => 'corporate', 'about' => 'Must not be saved'])
+            ->assertForbidden()->assertJsonPath('error', 'Тип аккаунта нельзя изменить.');
+        $this->assertSame($before, $this->state($this->user->id));
 
-        $this->postProfile(['about' => 'A permitted change'])->assertOk()
-            ->assertJsonPath('data.profile.username_changed_at', $response->json('data.profile.username_changed_at'));
+        $payload = $this->payload(['about' => 'A permitted change']);
+        unset($payload['account_type']);
+        $this->postJson('/api/profile.php', $payload, ['X-CSRF-TOKEN' => $this->token()])
+            ->assertOk()->assertJsonPath('data.profile.about', 'A permitted change');
+        $this->assertSame($this->user->username, $this->user->fresh()->username);
+        $this->assertSame('individual', $this->user->fresh()->account_type);
     }
 
-    #[DataProvider('renameWindows')]
-    public function test_rename_eligibility_uses_a_full_24_hour_window(int $secondsAgo, int $status): void
-    {
-        $clock = CarbonImmutable::now()->startOfSecond();
-        $this->travelTo($clock);
-        DB::table('users')->where('id', $this->user->id)->update([
-            'username_changed_at' => $clock->subSeconds($secondsAgo)->format('Y-m-d H:i:s.uP'),
-        ]);
-
-        $this->postProfile(['username' => 'NextName'])->assertStatus($status);
-    }
-
-    public static function renameWindows(): array
-    {
-        return [
-            'one second too early' => [86399, 429],
-            'exactly 24 hours' => [86400, 200],
-            'more than 24 hours' => [86401, 200],
-        ];
-    }
-
-    public function test_duplicate_username_rolls_back_every_profile_field_password_and_avatar(): void
+    public function test_username_change_rolls_back_every_profile_field_password_and_avatar(): void
     {
         $other = $this->createUser();
         $before = $this->state($this->user->id);
@@ -216,21 +193,39 @@ class ProfileTest extends DatabaseTestCase
             'username' => $other->username, 'about' => 'Must roll back',
             'current_password' => 'TestPassword123', 'new_password' => 'NewPassword123', 'confirm_password' => 'NewPassword123',
             'avatar' => 'data:image/png;base64,'.base64_encode(self::png()),
-        ])->assertConflict()->assertJsonPath('error', 'Логин или электронная почта уже используются.');
+        ])->assertForbidden()->assertJsonPath('error', 'Изменение логина временно недоступно.');
 
         $this->assertSame($before, $this->state($this->user->id));
     }
 
-    public function test_primary_and_secondary_email_conflicts_are_409_and_atomic(): void
+    public function test_primary_and_secondary_email_changes_are_forbidden_and_atomic(): void
     {
-        $other = $this->createUser();
-        $other->update(['email' => 'person@example.com', 'secondary_email' => 'backup@example.com']);
         $before = $this->state($this->user->id);
 
-        $this->postProfile(['email' => 'PERSON@EXAMPLE.COM', 'about' => 'Must roll back'])->assertConflict();
+        $this->postProfile(['email' => 'person@example.com', 'about' => 'Must roll back'])
+            ->assertForbidden()->assertJsonPath('error', 'Изменение электронной почты временно недоступно.');
         $this->assertSame($before, $this->state($this->user->id));
-        $this->postProfile(['secondary_email' => 'BACKUP@EXAMPLE.COM', 'about' => 'Must roll back'])->assertConflict();
+        $this->postProfile(['secondary_email' => 'backup@example.com', 'about' => 'Must roll back'])
+            ->assertForbidden();
         $this->assertSame($before, $this->state($this->user->id));
+    }
+
+    public function test_existing_email_addresses_cannot_be_removed(): void
+    {
+        $this->user->update(['email' => 'person@example.com', 'secondary_email' => 'backup@example.com']);
+        $before = $this->state($this->user->id);
+
+        $this->postProfile(['email' => null])->assertForbidden();
+        $this->postProfile(['secondary_email' => null])->assertForbidden();
+        $this->assertSame($before, $this->state($this->user->id));
+    }
+
+    public function test_an_old_session_is_rejected_after_password_version_changes(): void
+    {
+        DB::table('users')->where('id', $this->user->id)->update(['password_version' => 1]);
+
+        $this->getProfile()->assertUnauthorized();
+        $this->getJson('/api/auth.php')->assertJsonPath('data.user', null);
     }
 
     public function test_failure_after_the_avatar_write_rolls_back_the_entire_profile_and_exposes_no_details(): void
@@ -243,7 +238,7 @@ class ProfileTest extends DatabaseTestCase
         });
 
         $this->postProfile([
-            'username' => 'RolledBackName', 'email' => 'changed@example.com', 'about' => 'Must roll back',
+            'about' => 'Must roll back',
             'current_password' => 'TestPassword123', 'new_password' => 'NewPassword123', 'confirm_password' => 'NewPassword123',
             'avatar' => 'data:image/png;base64,'.base64_encode(self::png()),
         ])->assertStatus(500)->assertExactJson([
@@ -272,7 +267,7 @@ class ProfileTest extends DatabaseTestCase
         $this->getProfile('?id='.$other->id)->assertJsonPath('data.profile.id', $this->user->id);
     }
 
-    public function test_password_change_requires_the_current_password_and_preserves_the_session_contract(): void
+    public function test_password_change_requires_the_current_password_and_signs_out(): void
     {
         $oldHash = password_hash('LegacyPassword123', PASSWORD_BCRYPT, ['cost' => 4]);
         DB::table('users')->where('id', $this->user->id)->update(['password_hash' => $oldHash]);
@@ -282,20 +277,19 @@ class ProfileTest extends DatabaseTestCase
 
         $this->postProfile([
             'current_password' => 'LegacyPassword123', 'new_password' => $newPassword, 'confirm_password' => $newPassword,
-        ])->assertOk();
+        ])->assertOk()->assertJsonPath('data.signed_out', true);
 
         $stored = $this->user->fresh()->getAuthPassword();
         $this->assertSame('argon2id', password_get_info($stored)['algoName']);
         $this->assertTrue(Hash::check($newPassword, $stored));
         $this->assertFalse(Hash::check(str_repeat('a', 127).'2', $stored));
         $this->assertFalse(Hash::check('LegacyPassword123', $stored));
-        $this->assertSame($beforeId, $this->app['session.store']->getId());
-        $this->assertSame($beforeToken, $this->token());
-        $this->getProfile()->assertOk();
-
+        $this->assertNotSame($beforeId, $this->app['session.store']->getId());
+        $this->assertNotSame($beforeToken, $this->token());
+        $this->assertSame(1, (int) $this->user->fresh()->password_version);
         Auth::forgetGuards();
-        $this->useSessionCookie();
-        $this->postJson('/api/auth.php', ['action' => 'logout'], ['X-CSRF-TOKEN' => $this->token()])->assertOk();
+        $this->getProfile()->assertUnauthorized();
+
         Auth::forgetGuards();
         $this->useSessionCookie();
         $this->postJson('/api/auth.php', [

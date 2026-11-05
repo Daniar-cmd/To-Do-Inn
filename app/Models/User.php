@@ -15,7 +15,7 @@ class User extends Authenticatable
     protected $rememberTokenName = '';
 
     protected $fillable = [
-        'username', 'first_name', 'last_name', 'middle_name', 'email', 'secondary_email', 'password_hash', 'about', 'account_type',
+        'username', 'first_name', 'last_name', 'middle_name', 'email', 'secondary_email', 'password_hash', 'about',
         'github_url', 'telegram_url', 'preferred_theme', 'marketing_consent', 'marketing_consent_at', 'personal_data_consent_at', 'personal_data_consent_version',
         'organization_type', 'organization_name',
     ];

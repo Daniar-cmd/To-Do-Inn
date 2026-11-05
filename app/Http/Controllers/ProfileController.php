@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -23,10 +24,10 @@ class ProfileController
             return $this->success($this->readProfile($userId));
         }
 
-        return $this->update($userId, $request->json()->all());
+        return $this->update($request, $userId, $request->json()->all());
     }
 
-    private function update(int $userId, #[\SensitiveParameter] array $input): JsonResponse
+    private function update(Request $request, int $userId, #[\SensitiveParameter] array $input): JsonResponse
     {
         $storedPreferences = DB::table('users')->where('id', $userId)->first(['github_url', 'telegram_url', 'preferred_theme']);
         $input['github_url'] ??= $storedPreferences?->github_url ?? '';
@@ -57,7 +58,7 @@ class ProfileController
                 }
             }],
             'preferred_theme' => ['bail', 'required', 'string', Rule::in(['light', 'dark', 'system'])],
-            'account_type' => ['bail', 'required', 'string', Rule::in(['individual', 'team', 'corporate'])],
+            'account_type' => ['sometimes', 'bail', 'required', 'string', Rule::in(['individual', 'team', 'corporate'])],
         ], ['*' => 'Проверьте логин и остальные данные профиля.'])
             ->stopOnFirstFailure()->validate();
 
@@ -106,38 +107,36 @@ class ProfileController
 
         try {
             $result = DB::transaction(function () use ($userId, $data, $currentPassword, $newPassword, $avatarWasSent, $avatar): array|JsonResponse {
-                // Re-read under a row lock: concurrent requests cannot bypass the 24-hour rename rule
-                // or overwrite a password after another request has already changed it.
+                // Re-read under a row lock so identity and password checks use current values.
                 $user = User::query()->whereKey($userId)->lockForUpdate()->first();
                 if ($user === null) {
                     throw new AuthenticationException;
                 }
 
-                $usernameChanged = $user->username !== $data['username'];
-                if ($usernameChanged && $user->username_changed_at !== null
-                    && $user->username_changed_at->getTimestamp() > now()->getTimestamp() - 86400) {
-                    return $this->error(429, 'Логин можно менять не чаще одного раза в 24 часа.');
+                if ($data['email'] !== strtolower((string) $user->email)
+                    || $data['secondary_email'] !== strtolower((string) $user->secondary_email)) {
+                    return $this->error(403, 'Изменение электронной почты временно недоступно.');
+                }
+
+                if ($user->username !== $data['username']) {
+                    return $this->error(403, 'Изменение логина временно недоступно.');
+                }
+                if (isset($data['account_type']) && $user->account_type !== $data['account_type']) {
+                    return $this->error(403, 'Тип аккаунта нельзя изменить.');
                 }
 
                 $fields = [
-                    'username' => $data['username'],
-                    'email' => $data['email'] === '' ? null : $data['email'],
-                    'secondary_email' => $data['secondary_email'] === '' ? null : $data['secondary_email'],
                     'about' => trim($data['about']),
                     'github_url' => trim((string) $data['github_url']) === '' ? null : trim((string) $data['github_url']),
                     'telegram_url' => trim((string) $data['telegram_url']) === '' ? null : trim((string) $data['telegram_url']),
                     'preferred_theme' => $data['preferred_theme'],
-                    'account_type' => $data['account_type'],
                 ];
-                if ($usernameChanged) {
-                    // Include the timezone explicitly; the PostgreSQL server need not use PHP's UTC timezone.
-                    $fields['username_changed_at'] = now()->format('Y-m-d H:i:s.uP');
-                }
                 if ($newPassword !== '') {
                     if (!Hash::check($currentPassword, $user->getAuthPassword())) {
                         return $this->error(403, 'Текущий пароль указан неверно.');
                     }
                     $fields['password_hash'] = Hash::make($newPassword);
+                    $fields['password_version'] = DB::raw('password_version + 1');
                 }
 
                 User::query()->whereKey($userId)->update($fields);
@@ -162,8 +161,18 @@ class ProfileController
             throw $exception;
         }
 
-        // Keep the current session and CSRF token valid, as the existing React form expects.
-        return $result instanceof JsonResponse ? $result : $this->success($result);
+        if ($result instanceof JsonResponse) {
+            return $result;
+        }
+        if ($newPassword !== '') {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return response()->json(['success' => true, 'data' => ['profile' => $result, 'signed_out' => true]]);
+        }
+
+        return $this->success($result);
     }
 
     private function validateAvatar(mixed $value): array|JsonResponse

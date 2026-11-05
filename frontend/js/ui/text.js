@@ -16,3 +16,12 @@ export const taskUrgencyLevels = [
   { value: 3, mark: '!!!', label: 'Срочно' },
   { value: 4, mark: '!!!!', label: 'Критично' },
 ];
+
+export const listThemes = [
+  ['blue', 'Синяя тема'],
+  ['violet', 'Фиолетовая тема'],
+  ['green', 'Зелёная тема'],
+  ['amber', 'Янтарная тема'],
+  ['rose', 'Розовая тема'],
+  ['sky', 'Голубая тема'],
+];

@@ -761,6 +761,8 @@ class AuthTest extends DatabaseTestCase
         $this->assertIsString($token);
         $tokenHash = hash('sha256', $token);
 
+        Auth::login($user);
+
         $this->postAuth([
             'action' => 'reset_password', 'token' => $token,
             'password' => 'NewPassword123!', 'confirm_password' => 'NewPassword123!',
@@ -770,7 +772,9 @@ class AuthTest extends DatabaseTestCase
         $this->assertNotSame($oldHash, $user->password_hash);
         $this->assertTrue(Hash::check('NewPassword123!', $user->password_hash));
         $this->assertSame('argon2id', password_get_info($user->password_hash)['algoName']);
+        $this->assertSame(1, (int) $user->password_version);
         $this->assertNull(Cache::get('password-reset-token:'.$tokenHash));
+        $this->getAuth()->assertJsonPath('data.user', null);
 
         $this->postAuth([
             'action' => 'reset_password', 'token' => $token,

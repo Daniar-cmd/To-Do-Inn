@@ -21,9 +21,9 @@ test('workspace components render safely and guard editing/deletion event handle
       name: 'expose-workspace-components-for-tests',
       enforce: 'pre',
       transform(code, id) {
-        if (id.endsWith('/workspace/Workspace.jsx')) {
+        if (id.endsWith('/workspace/ListCard.jsx')) {
           // Keep portal children inspectable during the server-side event-handler tests.
-          return `${code.replace("import { createPortal } from 'react-dom';", 'const createPortal = (children) => children;')}\nexport { ListCard, ListTask };`;
+          return code.replace("import { createPortal } from 'react-dom';", 'const createPortal = (children) => children;');
         }
         if (id.endsWith('/workspace/ListDeleteDialog.jsx')) {
           return code.replace("import { createPortal } from 'react-dom';", 'const createPortal = (children) => children;');
@@ -32,7 +32,8 @@ test('workspace components render safely and guard editing/deletion event handle
     }],
   });
   try {
-    const { ListCard, ListTask } = await server.ssrLoadModule('/js/workspace/Workspace.jsx');
+    const { ListCard } = await server.ssrLoadModule('/js/workspace/ListCard.jsx');
+    const { ListTask } = await server.ssrLoadModule('/js/workspace/ListTask.jsx');
     const { ListDatePicker } = await server.ssrLoadModule('/js/workspace/ListDatePicker.jsx');
     const { FlagIcon } = await server.ssrLoadModule('/js/ui/icons.jsx');
     await t.test('all flags use the task SVG and default to the surrounding text color', () => {
