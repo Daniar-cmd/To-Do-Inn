@@ -1,6 +1,30 @@
 @use '../variables' as v;
 
 .list-creator { position: relative; z-index: 10; width: 100%; margin: 0; }
+.list-creator__mode-row { --creator-control-size: 52px; --creator-mode-toggle-size: 46.8px; display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
+.list-creator__mode-row > form { min-width: 0; flex: 1; }
+.list-option-button.list-creator__mode-toggle { display: grid; width: var(--creator-mode-toggle-size); min-width: var(--creator-mode-toggle-size); height: var(--creator-mode-toggle-size); flex: none; place-items: center; padding: 0; }
+.list-creator__mode-row .list-creator__name-field { min-height: var(--creator-control-size); }
+.list-creator__mode-toggle:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 2px 6px rgb(20 35 60 / 9%); }
+.list-creator__mode-toggle:active:not(:disabled) { transform: scale(.94); box-shadow: inset 0 1px 3px rgb(20 35 60 / 16%); }
+.list-creator__mode-toggle:focus-visible { outline: 2px solid var(--workspace-text); outline-offset: 3px; }
+.list-option-button.list-creator__mode-toggle[aria-pressed='true'],
+.list-option-button.list-creator__mode-toggle[aria-pressed='true']:hover { border-color: var(--workspace-border); background: var(--workspace-surface); color: var(--workspace-muted); }
+.list-creator__mode-icon { display: grid; grid-area: 1 / 1; place-items: center; opacity: 0; transform: scale(.72) rotate(-8deg); transition: opacity v.$motion-menu v.$ease-out, transform v.$motion-menu v.$ease-out; pointer-events: none; }
+.list-creator__mode-icon.is-note { opacity: 1; transform: scale(1) rotate(0); }
+.list-creator__mode-toggle[aria-pressed='true'] .list-creator__mode-icon.is-note { opacity: 0; transform: scale(.72) rotate(8deg); }
+.list-creator__mode-toggle[aria-pressed='true'] .list-creator__mode-icon.is-list { opacity: 1; transform: scale(1) rotate(0); }
+.list-creator__mode-icon svg { display: block; width: 17px; height: 17px; }
+.list-creator__mode-icon.is-list svg { width: 20px; height: 20px; }
+.note-creator__expanded { padding: 0 14px 14px; animation: list-options-in 180ms ease both; }
+.note-creator__body { display: block; width: 100%; min-height: 76px; overflow: hidden; resize: none; padding: 10px 12px; border: 1px solid var(--workspace-border); border-radius: 8px; outline: 0; background: var(--workspace-bg); color: var(--workspace-text); font: inherit; font-size: .88rem; line-height: 1.5; }
+.note-creator__body:focus { border-color: #a9bdd8; box-shadow: 0 0 0 2px rgb(52 120 212 / 9%); }
+.note-creator__body::placeholder { color: var(--workspace-muted); }
+.note-creator__options { padding: 0; }
+.note-creator__toolbar { flex-wrap: wrap; }
+
+.list-option-button.list-creator__mode-toggle:focus-visible { outline: 2px solid var(--workspace-text); outline-offset: 3px;
+}
 .workspace-lists { position: relative; z-index: 0; }
 .task-list-card.is-editing { z-index: 8; }
 
@@ -188,6 +212,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .list-creator__mode-icon { transition: none; }
+  .note-creator__expanded { animation: none; }
+
+  .list-creator__mode-toggle:hover,
+  .list-creator__mode-toggle:active,
+  .list-creator__mode-toggle:active svg,
+  .list-creator__mode-icon { transform: none; }
+
   .task-create-dialog .task-create-toolbar .list-option-button,
   .task-create-dialog .task-create-toolbar .list-option-button:not(.task-create-more-button) > svg:first-child,
   .task-create-dialog .task-create-toolbar .list-option-button:not(.task-create-more-button) > .sidebar-flag__icon,

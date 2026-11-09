@@ -434,6 +434,7 @@
   }
 
   .list-creator { width: 100%; }
+  .list-creator__mode-row { --creator-control-size: 50px; --creator-mode-toggle-size: 45px; }
   .list-creator__name-row { min-height: 50px; gap: 8px; padding-inline: 10px; }
   .list-creator__name-field { min-width: 0; min-height: 50px; }
   .list-creator__name-field input { min-width: 0; font-size: .9rem; }

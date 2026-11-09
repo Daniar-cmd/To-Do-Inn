@@ -100,6 +100,40 @@
   &__error { margin: 10px 0; color: #b33; font-size: .8rem; }
 }
 
+.workspace-note-card {
+  --note-accent: #3478d4;
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-self: start;
+  gap: 8px;
+  padding: 18px 20px;
+  border: 1px solid var(--workspace-border);
+  border-top: 5px solid var(--note-accent);
+  border-radius: 16px;
+  background: var(--workspace-surface);
+  color: var(--workspace-text);
+  box-shadow: 0 1px 3px rgb(20 35 60 / 5%);
+  transition: transform 170ms ease, box-shadow 170ms ease;
+  &:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgb(20 35 60 / 8%); }
+  &[data-theme='blue'] { --note-accent: #3478d4; }
+  &[data-theme='violet'] { --note-accent: #8b5cc7; }
+  &[data-theme='green'] { --note-accent: #31946c; }
+  &[data-theme='amber'] { --note-accent: #c8871a; }
+  &[data-theme='rose'] { --note-accent: #d15c79; }
+  &[data-theme='sky'] { --note-accent: #39a9c8; }
+  &__header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  &__header h2 { min-width: 0; margin: 0; color: var(--workspace-text); font-size: .98rem; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+  &__important { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border-radius: 6px; background: #fff1c2; color: #b77a08; }
+  &__important svg { width: 15px; height: 15px; fill: currentColor; }
+  &__annotation { margin: -3px 0 0; color: var(--workspace-muted); font-size: .76rem; line-height: 1.4; overflow-wrap: anywhere; }
+  &__body { color: var(--workspace-text); font-size: .86rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  &__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 3px; }
+}
+
+.list-grid__note-slot { position: relative; min-width: 0; align-self: start; }
+
 .workspace-shell[data-theme='dark'] .task-list-card__due-date { background: #813943; color: #fff; }
 .workspace-shell[data-theme='dark'] .task-list-card__due-date.is-scheduled { background: #29496c; color: #daeaff; }
 .workspace-shell[data-theme='dark'] .task-list-card__due-date.is-deadline { background: #813943; color: #fff; }
@@ -119,7 +153,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .task-list-card__tasks > li,
-  .task-drag-placeholder { transition: none !important; }
+  .task-drag-placeholder,
+  .workspace-note-card { transition: none !important; }
+  .workspace-note-card:hover { transform: none; }
   .task-drag-preview.is-lifting { animation: none !important; }
 }
 

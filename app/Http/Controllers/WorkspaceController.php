@@ -42,6 +42,7 @@ class WorkspaceController
                     'update_board' => $this->saveBoard($input, $userId, true),
                     'create_list' => $this->saveList($input, $userId, false),
                     'update_list' => $this->saveList($input, $userId, true),
+                    'create_note' => $this->createNote($input, $userId),
                     'set_list_pinned' => $this->setListPinned($input, $userId),
                     'reorder_list' => $this->reorderList($input, $userId),
                     'create_flag' => $this->createFlag($input, $userId),
@@ -127,6 +128,13 @@ class WorkspaceController
         $boardOwnerId = (int) $board->user_id;
         $flags = DB::table('user_flags')->where('user_id', $boardOwnerId)->where('board_id', $board->id)
             ->orderBy('name')->get(['id', 'board_id', 'name', 'color']);
+        $notes = DB::table('notes')->leftJoin('user_flags as note_flags', function ($join): void {
+            $join->on('note_flags.id', '=', 'notes.flag_id')->on('note_flags.user_id', '=', 'notes.user_id')
+                ->on('note_flags.board_id', '=', 'notes.board_id');
+        })->where('notes.user_id', $boardOwnerId)->where('notes.board_id', $board->id)
+            ->orderByDesc('notes.created_at')->orderByDesc('notes.id')
+            ->get(['notes.id', 'notes.board_id', 'notes.title', 'notes.body', 'notes.annotation', 'notes.is_important',
+                'notes.theme', 'notes.flag_id', 'notes.created_at', 'note_flags.name as flag_name', 'note_flags.color as flag_color']);
         $tasks = DB::table('tasks')->join('task_lists', function ($join): void {
             $join->on('task_lists.id', '=', 'tasks.list_id')->on('task_lists.user_id', '=', 'tasks.user_id')
                 ->on('task_lists.board_id', '=', 'tasks.board_id');
@@ -156,8 +164,75 @@ class WorkspaceController
                     $query->orderByDesc('lists.created_at')->orderByDesc('lists.id');
                 }
             })->get()->map(fn ($list) => $this->listData($list))->all(),
+            'notes' => $notes->map(fn ($note) => $this->noteData($note))->all(),
             'tasks' => $tasks->map(fn ($task) => $this->taskData($task))->all(),
         ]);
+    }
+
+    private function createNote(array $input, int $userId): JsonResponse
+    {
+        $boardId = $this->id($input['board_id'] ?? null);
+        $title = $input['title'] ?? null;
+        $body = $input['body'] ?? '';
+        $annotation = $input['annotation'] ?? '';
+        $important = $input['is_important'] ?? false;
+        $theme = $input['theme'] ?? 'blue';
+        $flagId = $input['flag_id'] ?? null;
+        $newFlag = $input['new_flag_name'] ?? '';
+
+        if ($boardId === false || !is_string($title) || trim($title) === ''
+            || preg_match('/[\x00-\x1F\x7F]/u', $title) || mb_strlen(trim($title)) > 80) {
+            $this->fail(422, 'Введите корректное название заметки длиной до 80 символов.');
+        }
+        if (!is_string($body) || mb_strlen($body) > 1200
+            || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $body)
+            || !is_string($annotation) || mb_strlen($annotation) > 200
+            || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $annotation)
+            || !is_bool($important) || !in_array($theme, self::THEMES, true) || !is_string($newFlag)) {
+            $this->fail(422, 'Проверьте текст заметки и её оформление.');
+        }
+        $newFlag = trim($newFlag);
+        if ($newFlag !== '' && (mb_strlen($newFlag) > 40 || preg_match('/[\x00-\x1F\x7F]/u', $newFlag))) {
+            $this->fail(422, 'Название флага должно быть не длиннее 40 символов.');
+        }
+        if ($newFlag !== '' && $flagId !== null) {
+            $this->fail(422, 'Выберите существующий флаг или создайте новый.');
+        }
+
+        $board = $this->accessibleBoard((int) $boardId, $userId, true);
+        if ($board === null) {
+            $this->fail(404, 'Рабочая доска не найдена.');
+        }
+        $boardOwnerId = (int) $board->user_id;
+        if ($newFlag !== '') {
+            $flagId = DB::table('user_flags')->insertGetId([
+                'user_id' => $boardOwnerId, 'board_id' => $boardId, 'name' => $newFlag,
+            ]);
+        } elseif ($flagId !== null) {
+            $flagId = $this->id($flagId);
+            if ($flagId === false) {
+                $this->fail(422, 'Проверьте выбранный флаг.');
+            }
+            if (!DB::table('user_flags')->where('id', $flagId)->where('user_id', $boardOwnerId)
+                ->where('board_id', $boardId)->exists()) {
+                $this->fail(404, 'Флаг не найден.');
+            }
+        }
+
+        $noteId = DB::table('notes')->insertGetId([
+            'user_id' => $boardOwnerId, 'board_id' => $boardId, 'flag_id' => $flagId,
+            'title' => trim($title), 'body' => $body, 'annotation' => trim($annotation),
+            'is_important' => $important, 'theme' => $theme,
+        ]);
+        $note = DB::table('notes')->leftJoin('user_flags as note_flags', function ($join): void {
+            $join->on('note_flags.id', '=', 'notes.flag_id')->on('note_flags.user_id', '=', 'notes.user_id')
+                ->on('note_flags.board_id', '=', 'notes.board_id');
+        })->where('notes.id', $noteId)->first([
+            'notes.id', 'notes.board_id', 'notes.title', 'notes.body', 'notes.annotation', 'notes.is_important',
+            'notes.theme', 'notes.flag_id', 'notes.created_at', 'note_flags.name as flag_name', 'note_flags.color as flag_color',
+        ]);
+
+        return $this->success(['note' => $this->noteData($note)], 201);
     }
 
     private function saveBoard(array $input, int $userId, bool $update): JsonResponse
@@ -743,6 +818,7 @@ class WorkspaceController
         DB::table('user_flags')->where('id', $flagId)->where('board_id', $boardId)->where('user_id', $userId)
             ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('task_lists')->whereColumn('task_lists.flag_id', 'user_flags.id'))
             ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('tasks')->whereColumn('tasks.flag_id', 'user_flags.id'))
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('notes')->whereColumn('notes.flag_id', 'user_flags.id'))
             ->delete();
     }
 
@@ -813,6 +889,15 @@ class WorkspaceController
             'is_pinned' => (bool) $list->is_pinned, 'sort_order' => (int) $list->sort_order,
             'theme' => $list->theme, 'flag' => $list->flag_id === null ? null
                 : ['id' => (int) $list->flag_id, 'name' => $list->flag_name, 'color' => $list->flag_color]];
+    }
+
+    private function noteData(object $note): array
+    {
+        return ['id' => (int) $note->id, 'board_id' => (int) $note->board_id, 'title' => $note->title,
+            'body' => $note->body, 'annotation' => $note->annotation, 'created_at' => $note->created_at,
+            'is_important' => (bool) $note->is_important, 'theme' => $note->theme,
+            'flag' => $note->flag_id === null ? null : ['id' => (int) $note->flag_id,
+                'name' => $note->flag_name, 'color' => $note->flag_color]];
     }
 
     private function success(array $data, int $status = 200): JsonResponse

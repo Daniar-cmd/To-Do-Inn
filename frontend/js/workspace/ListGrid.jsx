@@ -4,8 +4,10 @@ import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot
 
 const motionOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
 const carouselDuration = 440;
+const listSlotKey = (id) => `list:${id}`;
+const noteSlotKey = (id) => `note:${id}`;
 
-export function ListGrid({ lists, onSwap, onMoveTask, children }) {
+export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, children }) {
   const gridRef = useRef(null);
   const slots = useRef(new Map());
   const gesture = useRef(null);
@@ -37,7 +39,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
   focusedIdRef.current = focusedId;
   const listsRef = useRef(lists);
   listsRef.current = lists;
-  const orderKey = lists.map((list) => list.id).join(',');
+  const orderKey = `${lists.map((list) => list.id).join(',')}|${notes.map((note) => note.id).join(',')}`;
   const focusedIndex = lists.findIndex((list) => list.id === focusedId);
   const focusedList = lists[focusedIndex];
   const isFocusOpen = focusedId !== null;
@@ -47,7 +49,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
   const leavingList = slide && !slide.settled && lists.find((list) => list.id === slide.fromId);
 
   function cardFor(id) {
-    return slots.current.get(id)?.querySelector(':scope > .task-list-card');
+    return slots.current.get(id)?.querySelector(':scope > .task-list-card, :scope > .workspace-note-card');
   }
 
   function capturePositions() {
@@ -79,9 +81,13 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
     const columns = styles.gridTemplateColumns.trim().split(/\s+/).length;
     layoutWidth.current = grid.clientWidth;
     // Transforms belong to the animation, not to the layout's actual card height.
-    const positions = masonrySlots(orderedLists.map((item) => cardFor(item.id)?.offsetHeight || 0), columns, rowHeight, rowGap, cardGap);
-    for (const [index, item] of orderedLists.entries()) {
-      const slot = slots.current.get(item.id);
+    const layoutItems = [
+      ...orderedLists.map((item) => ({ key: listSlotKey(item.id) })),
+      ...notes.map((note) => ({ key: noteSlotKey(note.id) })),
+    ];
+    const positions = masonrySlots(layoutItems.map((item) => cardFor(item.key)?.offsetHeight || 0), columns, rowHeight, rowGap, cardGap);
+    for (const [index, item] of layoutItems.entries()) {
+      const slot = slots.current.get(item.key);
       if (!slot) continue;
       const { column, row, span } = positions[index];
       const columnValue = String(column);
@@ -96,7 +102,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
   function animateLayout(previous, draggedId = null) {
     const next = new Map();
     for (const id of slots.current.keys()) {
-      if (id === draggedId) continue;
+      if (draggedId !== null && id === listSlotKey(draggedId)) continue;
       const card = cardFor(id);
       if (!card) continue;
       stopAnimation(card);
@@ -484,7 +490,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
   function startDrag(event, list) {
     if (event.button !== 0 || !event.isPrimary || list.is_pinned || savingRef.current || gesture.current || focusedId !== null) return;
     const grid = gridRef.current;
-    const card = cardFor(list.id);
+    const card = cardFor(listSlotKey(list.id));
     if (!grid || !card) return;
     const handle = event.currentTarget;
     const initialBounds = card.getBoundingClientRect();
@@ -500,7 +506,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
     function updatePosition() {
       if (!current.active) return;
       const bounds = grid.getBoundingClientRect();
-      const sourceSlot = slots.current.get(list.id);
+      const sourceSlot = slots.current.get(listSlotKey(list.id));
       if (!sourceSlot) { void finish(false); return; }
       const cell = sourceSlot.getBoundingClientRect();
       const left = Math.max(bounds.left, Math.min(current.x - current.offsetX, bounds.right - initialBounds.width));
@@ -546,7 +552,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
         // Do not let a shorter preview collapse the page and move the pointer's target.
         grid.style.minHeight = `${bounds.height}px`;
         current.cells = lists.map((item) => {
-          const rect = slots.current.get(item.id).getBoundingClientRect();
+          const rect = slots.current.get(listSlotKey(item.id)).getBoundingClientRect();
           return { id: item.id, is_pinned: item.is_pinned, left: rect.left + window.scrollX,
             right: rect.right + window.scrollX, top: rect.top + window.scrollY, bottom: rect.bottom + window.scrollY };
         });
@@ -773,7 +779,7 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
     <p className="list-grid-announcement" role="status" aria-live="polite">{announcement}</p>
     {error && <p className="task-list-card__error" role="alert">{error}</p>}
     <div ref={gridRef} className={`workspace-lists__items list-grid${dragId !== null ? ' is-dragging' : ''}`} aria-busy={saving}>
-      {lists.map((list) => <div key={list.id} ref={(node) => { if (node) slots.current.set(list.id, node); else slots.current.delete(list.id); }} className={`list-grid__slot${list.id === dragId ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
+      {lists.map((list) => <div key={list.id} ref={(node) => { if (node) slots.current.set(listSlotKey(list.id), node); else slots.current.delete(listSlotKey(list.id)); }} className={`list-grid__slot${list.id === dragId ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
         if (focusedId !== null || event.target.closest('.task-list-card__meta-tags, .task-list-card__task-title, [role="dialog"], [role="alertdialog"], button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
         openList(list.id, event.currentTarget);
       }}>
@@ -783,6 +789,9 @@ export function ListGrid({ lists, onSwap, onMoveTask, children }) {
           locked: saving || dragId !== null,
           onOpen: (event) => openList(list.id, event.currentTarget),
         })}
+      </div>)}
+      {notes.map((note) => <div key={`note-${note.id}`} ref={(node) => { if (node) slots.current.set(noteSlotKey(note.id), node); else slots.current.delete(noteSlotKey(note.id)); }} className="list-grid__note-slot" tabIndex={-1}>
+        {renderNote?.(note)}
       </div>)}
     </div>
     {focusedList && createPortal(<div ref={overlayRef} className="workspace-shell list-focus-overlay" data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>

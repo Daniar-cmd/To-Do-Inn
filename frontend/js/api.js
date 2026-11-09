@@ -75,6 +75,10 @@ export async function createTaskList(data, csrfToken) {
   return request(workspaceEndpoint, { method: 'POST', data: { action: 'create_list', ...data }, csrfToken });
 }
 
+export async function createWorkspaceNote(data, csrfToken) {
+  return request(workspaceEndpoint, { method: 'POST', data: { action: 'create_note', ...data }, csrfToken });
+}
+
 export async function createBoard(data, csrfToken) {
   return request(workspaceEndpoint, { method: 'POST', data: { action: 'create_board', ...data }, csrfToken });
 }

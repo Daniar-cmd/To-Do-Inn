@@ -2,6 +2,7 @@
 export const uiText = {
   actions: { add: 'Добавить', create: 'Создать', save: 'Сохранить', cancel: 'Отмена', delete: 'Удалить', close: 'Закрыть' },
   feedback: { loading: 'Загрузка…', saving: 'Сохраняем…', adding: 'Добавляем…', deleting: 'Удаляем…', error: 'Не удалось выполнить действие. Попробуйте ещё раз.' },
+  creator: { newList: 'Новый список', newNote: 'Новая заметка', switchToList: 'Переключить на создание списка', switchToNote: 'Переключить на создание заметки' },
   task: {
     markImportant: 'Отметить задачу звездой', removeImportant: 'Убрать отметку важной задачи',
     showOptions: 'Показать срочность, аннотацию и локацию', hideOptions: 'Скрыть дополнительные параметры задачи',

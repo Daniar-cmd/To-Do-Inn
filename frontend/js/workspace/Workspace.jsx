@@ -5,8 +5,10 @@ import { ListCard } from './ListCard.jsx';
 import { ListGrid } from './ListGrid.jsx';
 import { groupTasksByList, moveListToSlot } from './listGrid.js';
 import { ListDatePicker } from './ListDatePicker.jsx';
-import { UserIcon, PlusIcon, SettingsIcon, BoardTypeIcon, FlagIcon, StarIcon } from '../ui/icons.jsx';
-import { listThemes } from '../ui/text.js';
+import { WorkspaceNoteCard } from './WorkspaceNoteCard.jsx';
+import { WorkspaceNoteCreator } from './WorkspaceNoteCreator.jsx';
+import { UserIcon, PlusIcon, SettingsIcon, BoardTypeIcon, FlagIcon, StarIcon, NoteIcon, ListIcon } from '../ui/icons.jsx';
+import { listThemes, uiText } from '../ui/text.js';
 import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
 
 const accountTypeLabels = {
@@ -85,6 +87,7 @@ export function Workspace() {
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [flags, setFlags] = useState([]);
   const [lists, setLists] = useState([]);
+  const [notes, setNotes] = useState([]);
   const [tasks, setTasks] = useState([]);
   const tasksByList = useMemo(() => groupTasksByList(tasks), [tasks]);
   const [filter, setFilter] = useState('all');
@@ -94,6 +97,7 @@ export function Workspace() {
   const [searchError, setSearchError] = useState('');
   const [activeListId, setActiveListId] = useState(null);
   const [name, setName] = useState('');
+  const [creationMode, setCreationMode] = useState('list');
   const [listDescription, setListDescription] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [important, setImportant] = useState(false);
@@ -106,6 +110,7 @@ export function Workspace() {
   const [creatingFlag, setCreatingFlag] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [saving, setSaving] = useState(false);
+  const [noteSaving, setNoteSaving] = useState(false);
 
   useEffect(() => {
     document.title = 'Рабочее пространство — To Do Inn!';
@@ -193,6 +198,7 @@ export function Workspace() {
         setCorporateAccounts(workspace.corporate_accounts || []);
         setFlags(workspace.flags);
         setLists(workspace.lists);
+        setNotes(workspace.notes || []);
         setTasks(workspace.tasks || []);
       })
       .catch((error) => setWorkspaceLoadError(error.message));
@@ -270,6 +276,7 @@ export function Workspace() {
       setCorporateAccounts(workspace.corporate_accounts || []);
       setFlags(workspace.flags);
       setLists(workspace.lists);
+      setNotes(workspace.notes || []);
       setTasks(workspace.tasks || []);
       setFilter('all');
       setActiveListId(null);
@@ -288,6 +295,7 @@ export function Workspace() {
       const workspace = await getWorkspace(boardId);
       if (requestId !== workspaceRequestId.current || String(activeBoardId.current) !== String(boardId)) return;
       setLists(workspace.lists);
+      setNotes(workspace.notes || []);
       setFlags(workspace.flags);
       setTasks(workspace.tasks || []);
     } catch (error) {
@@ -373,6 +381,7 @@ export function Workspace() {
       } catch { /* Board selection remains active for this page. */ }
       setFlags(workspace.flags);
       setLists(workspace.lists);
+      setNotes(workspace.notes || []);
       setTasks(workspace.tasks || []);
       setFilter('all');
       setActiveListId(null);
@@ -470,6 +479,7 @@ export function Workspace() {
         setCorporateAccounts(workspace.corporate_accounts || []);
         setFlags(workspace.flags);
         setLists(workspace.lists);
+        setNotes(workspace.notes || []);
         setTasks(workspace.tasks || []);
         setFilter('all');
         setActiveListId(null);
@@ -535,8 +545,18 @@ export function Workspace() {
   function handleNameChange(value) {
     setName(value);
     const hasName = value.trim().length > 0;
-    setExpanded(hasName);
+    setExpanded(creationMode === 'list' && hasName);
     if (!hasName) setFeedback('');
+  }
+
+  function toggleCreationMode() {
+    const nextMode = creationMode === 'list' ? 'note' : 'list';
+    setCreationMode(nextMode);
+    setExpanded(nextMode === 'list' && Boolean(name.trim()));
+    setFeedback('');
+    setMoreListOptionsOpen(false);
+    setFlagPickerOpen(false);
+    setDatePickerOpen(false);
   }
 
   function cancelListCreation() {
@@ -557,6 +577,7 @@ export function Workspace() {
 
   async function handleCreateList(event) {
     event.preventDefault();
+    if (creationMode !== 'list') return;
     if (!name.trim()) {
       setFeedback('Введите название списка.');
       return;
@@ -729,6 +750,12 @@ export function Workspace() {
     if (filter.startsWith('flag:')) return String(list.flag?.id) === filter.slice(5);
     return true;
   });
+  const visibleNotes = notes.filter((note) => {
+    if (filter === 'important') return note.is_important;
+    if (filter === 'planned') return false;
+    if (filter.startsWith('flag:')) return String(note.flag?.id) === filter.slice(5);
+    return true;
+  });
   const manageableCorporateAccounts = corporateAccounts.filter((item) => item.role === 'owner');
   const canManageBoard = (item) => !item.corporate_account_id
     || corporateAccounts.some((organization) => organization.id === item.corporate_account_id && organization.role === 'owner');
@@ -796,7 +823,7 @@ export function Workspace() {
           <div className="workspace-sidebar__theme"><span>Тема оформления</span><ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} /></div>
           <nav className="sidebar-filters" aria-label="Быстрые фильтры">
             <button className={`sidebar-filter${filter === 'all' ? ' is-active' : ''}`} type="button" onClick={() => updateFilter('all')}>
-              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 5h16M4 12h16M4 19h16" /></svg><span>Все списки</span>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 5h16M4 12h16M4 19h16" /></svg><span>Все элементы</span>
             </button>
             <button className={`sidebar-filter${filter === 'important' ? ' is-active' : ''}`} type="button" onClick={() => updateFilter('important')}>
               <StarIcon /><span>Важное</span>
@@ -824,17 +851,19 @@ export function Workspace() {
         <main className="workspace-main" aria-label="Рабочая область">
           {workspaceNotice && <p className="workspace-notice" role="status">{workspaceNotice}</p>}
           {!searchQuery.trim() && filter === 'planned' ? <div className="workspace-placeholder" role="status">Эта функция пока в разработке</div> : <>
-          {!searchQuery.trim() && <section className="list-creator" aria-label="Создать список">
-            <form className={expanded ? 'is-expanded' : ''} onSubmit={handleCreateList}>
-              <div className="list-creator__name-row">
-                <button className="list-creator__cancel" type="button" aria-label={expanded ? 'Отменить создание списка' : 'Ввести название нового списка'} title={expanded ? 'Отменить создание' : 'Новый список'} disabled={saving} onClick={() => expanded ? cancelListCreation() : document.getElementById('new-list-name')?.focus()}><PlusIcon /></button>
-                <label className="list-creator__name-field" htmlFor="new-list-name">
-                  <input id="new-list-name" name="todo-list-title" type="text" maxLength="80" placeholder="Новый список" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck="false" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
-                </label>
-                {expanded && <button className="list-creator__submit" type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Создать'}</button>}
-              </div>
+          {!searchQuery.trim() && <section className="list-creator" aria-label="Создать список или заметку">
+            <div className="list-creator__mode-row">
+              <button className="list-option-button list-creator__mode-toggle" type="button" aria-label={creationMode === 'note' ? uiText.creator.switchToList : uiText.creator.switchToNote} title={creationMode === 'note' ? uiText.creator.switchToList : uiText.creator.switchToNote} aria-pressed={creationMode === 'note'} disabled={saving || noteSaving} onClick={toggleCreationMode}><span className="list-creator__mode-icon is-note" aria-hidden="true"><NoteIcon /></span><span className="list-creator__mode-icon is-list" aria-hidden="true"><ListIcon /></span></button>
+              {creationMode === 'list' ? <form className={expanded ? 'is-expanded' : ''} onSubmit={handleCreateList}>
+                <div className="list-creator__name-row">
+                  <button className="list-creator__cancel" type="button" aria-label={expanded ? 'Отменить создание списка' : 'Ввести название нового списка'} title={expanded ? 'Отменить создание' : uiText.creator.newList} disabled={saving} onClick={() => expanded ? cancelListCreation() : document.getElementById('new-list-name')?.focus()}><PlusIcon /></button>
+                  <label className="list-creator__name-field" htmlFor="new-list-name">
+                    <input id="new-list-name" name="todo-list-title" type="text" maxLength="80" placeholder={uiText.creator.newList} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck="false" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
+                  </label>
+                  {expanded && creationMode === 'list' && <button className="list-creator__submit" type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Создать'}</button>}
+                </div>
 
-              {expanded && (
+                {expanded && creationMode === 'list' && (
                 <div className="list-creator__options">
                   <div className={`list-creator__toolbar${moreListOptionsOpen ? ' is-more-open' : ''}`}>
                     <button className={`list-option-button${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} aria-label={important ? 'Убрать важность списка' : 'Сделать список важным'} title="Важный список" onClick={() => setImportant((current) => !current)}>
@@ -885,11 +914,12 @@ export function Workspace() {
                   </div>
                   {feedback && <p className="list-creator__feedback" role="alert">{feedback}</p>}
                 </div>
-              )}
-            </form>
+                )}
+              </form> : <WorkspaceNoteCreator boardId={board.id} flags={flags} csrfToken={csrfToken} isSaving={noteSaving} onSavingChange={setNoteSaving} onCreated={(note) => { if (String(activeBoardId.current) === String(note.board_id)) setNotes((current) => [note, ...current]); }} onFlagCreated={addCreatedFlag} />}
+            </div>
           </section>}
 
-          <section className="workspace-lists" aria-label="Списки">
+          <section className="workspace-lists" aria-label="Списки и заметки">
             {searchQuery.trim() ? <div className="workspace-search-results" aria-live="polite">
               {searchLoading && <p className="workspace-search-results__message">Ищем по доскам…</p>}
               {searchError && <p className="workspace-search-results__message is-error" role="alert">{searchError}</p>}
@@ -898,7 +928,7 @@ export function Workspace() {
                 <p className="workspace-search-result__board">{result.board_name}</p>
                 <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
               </div>)}
-            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} onSwap={reorderListCards} onMoveTask={moveTask}>
+            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} notes={visibleNotes} renderNote={(note) => <WorkspaceNoteCard note={note} />} onSwap={reorderListCards} onMoveTask={moveTask}>
               {(list, dragHandle, isFullscreen = false) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} isFullscreen={isFullscreen} />}
             </ListGrid>}
           </section>

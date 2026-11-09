@@ -39,7 +39,7 @@ class WorkspaceTest extends DatabaseTestCase
             'board' => ['id' => $this->board, 'name' => 'Default', 'description' => '', 'board_type' => 'personal', 'corporate_account_id' => null],
             'boards' => [['id' => $this->board, 'name' => 'Default', 'description' => '', 'board_type' => 'personal', 'corporate_account_id' => null]],
             'corporate_accounts' => [],
-            'flags' => [], 'lists' => [], 'tasks' => [],
+            'flags' => [], 'lists' => [], 'notes' => [], 'tasks' => [],
         ]])->assertHeader('Cache-Control', 'no-store, private')->assertHeader('X-Content-Type-Options', 'nosniff');
     }
 
