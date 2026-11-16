@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createBoard, createTaskList, deleteBoard, getProfile, getSession, getWorkspace, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace } from '../api.js';
+import { createBoard, createTaskList, deleteBoard, getProfile, getSession, getWorkspace, removeNoteImage, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace, uploadNoteImage } from '../api.js';
 import { NotificationsMenu } from '../NotificationsMenu.jsx';
 import { ListCard } from './ListCard.jsx';
 import { ListGrid } from './ListGrid.jsx';
-import { groupTasksByList, moveListToSlot } from './listGrid.js';
+import { groupTasksByList, moveWorkspaceCardToSlot, workspaceCards } from './listGrid.js';
 import { ListDatePicker } from './ListDatePicker.jsx';
 import { WorkspaceNoteCard } from './WorkspaceNoteCard.jsx';
 import { WorkspaceNoteCreator } from './WorkspaceNoteCreator.jsx';
@@ -324,22 +324,39 @@ export function Workspace() {
     }
   }
 
-  async function reorderListCards(sourceId, targetId) {
+  async function toggleNotePinned(note, isPinned) {
+    await updateWorkspace({ action: 'set_note_pinned', note_id: note.id, is_pinned: isPinned }, csrfToken);
+    await refreshBoardData(note.board_id);
+  }
+
+  async function saveNote(note, fields, imageChange = {}) {
+    await updateWorkspace({ action: 'update_note', note_id: note.id, ...fields }, csrfToken);
+    if (imageChange.file) await uploadNoteImage(note.id, imageChange.file, imageChange.offset ?? 0, csrfToken);
+    else if (imageChange.remove) await removeNoteImage(note.id, csrfToken);
+    await refreshBoardData(note.board_id);
+  }
+
+  async function reorderWorkspaceCards(sourceId, targetId, sourceType, targetType) {
     const boardId = board.id;
     const requestId = ++workspaceRequestId.current;
-    const before = lists;
-    const insertBefore = lists.findIndex((item) => item.id === sourceId) > lists.findIndex((item) => item.id === targetId);
-    setLists((current) => moveListToSlot(current, sourceId, targetId));
+    const beforeLists = lists;
+    const beforeNotes = notes;
+    const cards = workspaceCards(lists, notes);
+    const sourceKey = `${sourceType}:${sourceId}`;
+    const targetKey = `${targetType}:${targetId}`;
+    const insertBefore = cards.findIndex((item) => item.cardKey === sourceKey) > cards.findIndex((item) => item.cardKey === targetKey);
+    const nextCards = moveWorkspaceCardToSlot(cards, sourceKey, targetKey)
+      .map((item, sort_order) => ({ ...item, sort_order }));
+    setLists(nextCards.filter((item) => item.cardType === 'list').map(({ cardType, cardKey, ...item }) => item));
+    setNotes(nextCards.filter((item) => item.cardType === 'note').map(({ cardType, cardKey, ...item }) => item));
     try {
-      await updateWorkspace({ action: 'reorder_list', list_id: sourceId, target_list_id: targetId, insert_before: insertBefore }, csrfToken);
+      await updateWorkspace({ action: 'reorder_workspace_item', item_id: sourceId, target_item_id: targetId,
+        item_type: sourceType, target_item_type: targetType, insert_before: insertBefore }, csrfToken);
       await refreshBoardData(boardId);
     } catch (error) {
       if (String(activeBoardId.current) === String(boardId)) {
-        if (requestId === workspaceRequestId.current) {
-          setLists(before);
-        } else {
-          await refreshBoardData(boardId);
-        }
+        if (requestId === workspaceRequestId.current) { setLists(beforeLists); setNotes(beforeNotes); }
+        else await refreshBoardData(boardId);
       }
       throw error;
     }
@@ -915,7 +932,7 @@ export function Workspace() {
                   {feedback && <p className="list-creator__feedback" role="alert">{feedback}</p>}
                 </div>
                 )}
-              </form> : <WorkspaceNoteCreator boardId={board.id} flags={flags} csrfToken={csrfToken} isSaving={noteSaving} onSavingChange={setNoteSaving} onCreated={(note) => { if (String(activeBoardId.current) === String(note.board_id)) setNotes((current) => [note, ...current]); }} onFlagCreated={addCreatedFlag} />}
+              </form> : <WorkspaceNoteCreator boardId={board.id} title={name} onTitleChange={setName} flags={flags} csrfToken={csrfToken} isSaving={noteSaving} onSavingChange={setNoteSaving} onImageError={(message) => setWorkspaceNotice(`Заметка создана, изображение не прикреплено: ${message}`)} onCreated={(note) => { if (String(activeBoardId.current) === String(note.board_id)) setNotes((current) => [note, ...current]); }} onFlagCreated={addCreatedFlag} />}
             </div>
           </section>}
 
@@ -928,7 +945,7 @@ export function Workspace() {
                 <p className="workspace-search-result__board">{result.board_name}</p>
                 <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError(error.message))} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
               </div>)}
-            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} notes={visibleNotes} renderNote={(note) => <WorkspaceNoteCard note={note} />} onSwap={reorderListCards} onMoveTask={moveTask}>
+            </div> : <ListGrid key={`${board.id}:${filter}`} lists={visibleLists} notes={visibleNotes} renderNote={(note, dragHandle, isFullscreen = false) => <WorkspaceNoteCard note={note} flags={flags} csrfToken={csrfToken} onSave={saveNote} onTogglePin={toggleNotePinned} onDrag={dragHandle} isFullscreen={isFullscreen} />} onSwap={reorderWorkspaceCards} onMoveTask={moveTask}>
               {(list, dragHandle, isFullscreen = false) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} isFullscreen={isFullscreen} />}
             </ListGrid>}
           </section>

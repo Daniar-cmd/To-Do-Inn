@@ -8,6 +8,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -43,6 +44,9 @@ class WorkspaceController
                     'create_list' => $this->saveList($input, $userId, false),
                     'update_list' => $this->saveList($input, $userId, true),
                     'create_note' => $this->createNote($input, $userId),
+                    'update_note' => $this->updateNote($input, $userId),
+                    'set_note_pinned' => $this->setNotePinned($input, $userId),
+                    'reorder_workspace_item' => $this->reorderWorkspaceItem($input, $userId),
                     'set_list_pinned' => $this->setListPinned($input, $userId),
                     'reorder_list' => $this->reorderList($input, $userId),
                     'create_flag' => $this->createFlag($input, $userId),
@@ -57,6 +61,85 @@ class WorkspaceController
             }
             throw $exception;
         }
+    }
+
+    public function noteImage(Request $request, int $noteId)
+    {
+        $userId = (int) $request->user()->getAuthIdentifier();
+        $note = DB::table('notes')->where('id', $noteId)->first(['id', 'user_id', 'board_id', 'body', 'image_mime', 'image_offset']);
+        $board = $note === null ? null : $this->accessibleBoard((int) $note->board_id, $userId);
+        if ($note === null || $board === null || (int) $note->user_id !== (int) $board->user_id) {
+            $this->fail(404, 'Заметка не найдена.');
+        }
+
+        if ($request->isMethod('GET')) {
+            $stored = DB::selectOne("SELECT encode(image_data, 'base64') AS image_base64 FROM notes WHERE id = ?", [$noteId]);
+            if ($stored?->image_base64 === null) {
+                $this->fail(404, 'У заметки нет изображения.');
+            }
+            $bytes = base64_decode($stored->image_base64, true);
+            if ($bytes === false) {
+                $this->fail(500, 'Не удалось загрузить изображение.');
+            }
+            return response($bytes, 200, [
+                'Content-Type' => $note->image_mime,
+                'Content-Disposition' => 'inline',
+                'Cache-Control' => 'private, no-store',
+                'X-Content-Type-Options' => 'nosniff',
+            ]);
+        }
+
+        return DB::transaction(function () use ($request, $noteId, $note, $userId): JsonResponse {
+            if (!DB::table('users')->where('id', $userId)->lockForUpdate()->first(['id'])) {
+                $this->fail(401, 'Требуется войти в аккаунт.');
+            }
+            $current = DB::table('notes')->where('id', $noteId)->lockForUpdate()->first(['id', 'user_id', 'board_id', 'body']);
+            $board = $current === null ? null : $this->accessibleBoard((int) $current->board_id, $userId, true);
+            if ($current === null || $board === null || (int) $current->user_id !== (int) $board->user_id) {
+                $this->fail(404, 'Заметка не найдена.');
+            }
+
+            if ($request->isMethod('DELETE')) {
+                DB::table('notes')->where('id', $noteId)->update(['image_data' => null, 'image_mime' => null, 'image_offset' => null, 'updated_at' => now()]);
+                return $this->success(['removed' => true]);
+            }
+
+            $file = $request->file('image');
+            if (!$file instanceof UploadedFile || !$file->isValid() || $file->getSize() > 1_048_576) {
+                $this->fail(422, 'Выберите изображение размером не больше 1 МБ.');
+            }
+            $bytes = file_get_contents($file->getPathname());
+            if (!is_string($bytes) || $bytes === '' || strlen($bytes) > 1_048_576) {
+                $this->fail(422, 'Изображение должно быть не больше 1 МБ.');
+            }
+            $mime = $this->noteImageMime($bytes);
+            if ($mime === null) {
+                $this->fail(422, 'Поддерживаются PNG, JPG, WebP, GIF, HEIC и AVIF.');
+            }
+            $offset = $request->input('offset', 0);
+            if (filter_var($offset, FILTER_VALIDATE_INT) === false || (int) $offset < 0) {
+                $this->fail(422, 'Проверьте положение изображения в заметке.');
+            }
+            $bodyLength = intdiv(strlen(mb_convert_encoding($current->body, 'UTF-16LE', 'UTF-8')), 2);
+            $offset = min((int) $offset, $bodyLength);
+            DB::update("UPDATE notes SET image_data = decode(?, 'base64'), image_mime = ?, image_offset = ?, updated_at = ? WHERE id = ?", [base64_encode($bytes), $mime, $offset, now(), $noteId]);
+
+            return $this->success(['image' => ['url' => "/api/notes/{$noteId}/image", 'mime' => $mime, 'offset' => $offset]]);
+        });
+    }
+
+    private function noteImageMime(string $bytes): ?string
+    {
+        if (str_starts_with($bytes, "\x89PNG\r\n\x1a\n")) return 'image/png';
+        if (str_starts_with($bytes, "\xff\xd8\xff")) return 'image/jpeg';
+        if (str_starts_with($bytes, 'GIF87a') || str_starts_with($bytes, 'GIF89a')) return 'image/gif';
+        if (strlen($bytes) >= 12 && substr($bytes, 0, 4) === 'RIFF' && substr($bytes, 8, 4) === 'WEBP') return 'image/webp';
+        if (strlen($bytes) >= 12 && substr($bytes, 4, 4) === 'ftyp') {
+            $brands = substr($bytes, 8, 64);
+            if (preg_match('/(?:heic|heix|hevc|hevx|heim|heis|mif1|msf1)/', $brands)) return 'image/heic';
+            if (preg_match('/(?:avif|avis)/', $brands)) return 'image/avif';
+        }
+        return null;
     }
 
     private function read(Request $request, int $userId): JsonResponse
@@ -132,9 +215,9 @@ class WorkspaceController
             $join->on('note_flags.id', '=', 'notes.flag_id')->on('note_flags.user_id', '=', 'notes.user_id')
                 ->on('note_flags.board_id', '=', 'notes.board_id');
         })->where('notes.user_id', $boardOwnerId)->where('notes.board_id', $board->id)
-            ->orderByDesc('notes.created_at')->orderByDesc('notes.id')
-            ->get(['notes.id', 'notes.board_id', 'notes.title', 'notes.body', 'notes.annotation', 'notes.is_important',
-                'notes.theme', 'notes.flag_id', 'notes.created_at', 'note_flags.name as flag_name', 'note_flags.color as flag_color']);
+            ->orderByDesc('notes.is_pinned')->orderBy('notes.sort_order')->orderByDesc('notes.created_at')->orderByDesc('notes.id')
+            ->get(['notes.id', 'notes.board_id', 'notes.title', 'notes.body', 'notes.annotation', 'notes.is_important', 'notes.image_mime', 'notes.image_offset',
+                'notes.theme', 'notes.flag_id', 'notes.created_at', 'notes.is_pinned', 'notes.sort_order', 'note_flags.name as flag_name', 'note_flags.color as flag_color']);
         $tasks = DB::table('tasks')->join('task_lists', function ($join): void {
             $join->on('task_lists.id', '=', 'tasks.list_id')->on('task_lists.user_id', '=', 'tasks.user_id')
                 ->on('task_lists.board_id', '=', 'tasks.board_id');
@@ -219,20 +302,127 @@ class WorkspaceController
             }
         }
 
+        $firstOrder = DB::table('task_lists')->where('board_id', $boardId)->min('sort_order');
+        $firstNoteOrder = DB::table('notes')->where('board_id', $boardId)->min('sort_order');
+        $orders = array_filter([$firstOrder, $firstNoteOrder], fn ($order) => $order !== null);
+        $firstOrder = $orders === [] ? 0 : min($orders);
         $noteId = DB::table('notes')->insertGetId([
             'user_id' => $boardOwnerId, 'board_id' => $boardId, 'flag_id' => $flagId,
             'title' => trim($title), 'body' => $body, 'annotation' => trim($annotation),
-            'is_important' => $important, 'theme' => $theme,
+            'is_important' => $important, 'theme' => $theme, 'sort_order' => (int) $firstOrder - 1,
         ]);
         $note = DB::table('notes')->leftJoin('user_flags as note_flags', function ($join): void {
             $join->on('note_flags.id', '=', 'notes.flag_id')->on('note_flags.user_id', '=', 'notes.user_id')
                 ->on('note_flags.board_id', '=', 'notes.board_id');
         })->where('notes.id', $noteId)->first([
             'notes.id', 'notes.board_id', 'notes.title', 'notes.body', 'notes.annotation', 'notes.is_important',
-            'notes.theme', 'notes.flag_id', 'notes.created_at', 'note_flags.name as flag_name', 'note_flags.color as flag_color',
+            'notes.theme', 'notes.flag_id', 'notes.created_at', 'notes.is_pinned', 'notes.sort_order', 'notes.image_mime', 'notes.image_offset', 'note_flags.name as flag_name', 'note_flags.color as flag_color',
         ]);
 
         return $this->success(['note' => $this->noteData($note)], 201);
+    }
+
+    private function updateNote(array $input, int $userId): JsonResponse
+    {
+        $id = $this->id($input['note_id'] ?? null);
+        $title = $input['title'] ?? null;
+        $body = $input['body'] ?? '';
+        $annotation = $input['annotation'] ?? '';
+        $important = $input['is_important'] ?? false;
+        $theme = $input['theme'] ?? 'blue';
+        $flagId = $input['flag_id'] ?? null;
+        if ($id === false || !is_string($title) || trim($title) === '' || mb_strlen(trim($title)) > 80
+            || preg_match('/[\x00-\x1F\x7F]/u', $title)
+            || !is_string($body) || mb_strlen($body) > 1200 || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $body)
+            || !is_string($annotation) || mb_strlen($annotation) > 200 || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $annotation)
+            || !is_bool($important) || !in_array($theme, self::THEMES, true)) {
+            $this->fail(422, 'Проверьте настройки заметки.');
+        }
+        $note = DB::table('notes')->where('id', $id)->first();
+        $board = $note === null ? null : $this->accessibleBoard((int) $note->board_id, $userId, true);
+        if ($note === null || $board === null || (int) $note->user_id !== (int) $board->user_id) {
+            $this->fail(404, 'Заметка не найдена.');
+        }
+        if ($flagId !== null) {
+            $flagId = $this->id($flagId);
+            if ($flagId === false || !DB::table('user_flags')->where('id', $flagId)->where('user_id', $board->user_id)->where('board_id', $board->id)->exists()) {
+                $this->fail(404, 'Флаг не найден.');
+            }
+        }
+        $previousFlagId = $note->flag_id === null ? null : (int) $note->flag_id;
+        DB::table('notes')->where('id', $id)->update(['title' => trim($title), 'body' => $body,
+            'annotation' => trim($annotation), 'is_important' => $important, 'theme' => $theme,
+            'flag_id' => $flagId, 'updated_at' => now()]);
+        $bodyLength = intdiv(strlen(mb_convert_encoding($body, 'UTF-16LE', 'UTF-8')), 2);
+        DB::update('UPDATE notes SET image_offset = LEAST(image_offset, ?) WHERE id = ? AND image_data IS NOT NULL', [$bodyLength, $id]);
+        if ($previousFlagId !== null && $previousFlagId !== $flagId) {
+            $this->deleteUnusedFlag($previousFlagId, (int) $board->id, (int) $board->user_id);
+        }
+        return $this->success(['updated' => true]);
+    }
+
+    private function setNotePinned(array $input, int $userId): JsonResponse
+    {
+        $id = $this->id($input['note_id'] ?? null);
+        $isPinned = $input['is_pinned'] ?? null;
+        $note = $id === false ? null : DB::table('notes')->where('id', $id)->first();
+        $board = $note === null ? null : $this->accessibleBoard((int) $note->board_id, $userId, true);
+        if ($note === null || !is_bool($isPinned) || $board === null || (int) $note->user_id !== (int) $board->user_id) {
+            $this->fail(404, 'Заметка не найдена.');
+        }
+        DB::table('notes')->where('id', $id)->update(['is_pinned' => $isPinned]);
+        return $this->success(['updated' => true]);
+    }
+
+    private function reorderWorkspaceItem(array $input, int $userId): JsonResponse
+    {
+        $id = $this->id($input['item_id'] ?? null);
+        $targetId = $this->id($input['target_item_id'] ?? null);
+        $itemType = $input['item_type'] ?? null;
+        $targetType = $input['target_item_type'] ?? null;
+        $insertBefore = $input['insert_before'] ?? null;
+        $tables = ['list' => 'task_lists', 'note' => 'notes'];
+        if ($id === false || $targetId === false || !is_string($itemType) || !is_string($targetType)
+            || !isset($tables[$itemType], $tables[$targetType]) || !is_bool($insertBefore)) {
+            $this->fail(422, 'Проверьте порядок карточек.');
+        }
+        $source = DB::table($tables[$itemType])->where('id', $id)->first();
+        $board = $source === null ? null : $this->accessibleBoard((int) $source->board_id, $userId, true);
+        $source = $board === null ? null : DB::table($tables[$itemType])->where('id', $id)->first();
+        $target = $source === null ? null : DB::table($tables[$targetType])->where('id', $targetId)
+            ->where('board_id', $source->board_id)->first();
+        if ($source === null || $target === null || $board === null
+            || (int) $source->user_id !== (int) $board->user_id || (int) $target->user_id !== (int) $board->user_id) {
+            $this->fail(404, 'Карточка не найдена в этой доске.');
+        }
+        if ((bool) $source->is_pinned || (bool) $target->is_pinned) {
+            $this->fail(409, 'Закреплённую карточку нельзя переместить.');
+        }
+        $sourceKey = $itemType . ':' . $id;
+        $targetKey = $targetType . ':' . $targetId;
+        if ($sourceKey === $targetKey) return $this->success(['updated' => true]);
+
+        $cards = DB::table('task_lists')->where('board_id', $board->id)->where('user_id', $board->user_id)
+            ->where('is_pinned', false)->get(['id', 'sort_order'])->map(fn ($card) => [
+                'key' => 'list:' . $card->id, 'id' => (int) $card->id, 'type' => 'list', 'sort_order' => (int) $card->sort_order,
+            ])->all();
+        $cards = array_merge($cards, DB::table('notes')->where('board_id', $board->id)->where('user_id', $board->user_id)
+            ->where('is_pinned', false)->get(['id', 'sort_order'])->map(fn ($card) => [
+                'key' => 'note:' . $card->id, 'id' => (int) $card->id, 'type' => 'note', 'sort_order' => (int) $card->sort_order,
+            ])->all());
+        usort($cards, fn ($left, $right) => $left['sort_order'] <=> $right['sort_order'] ?: strcmp($left['key'], $right['key']));
+        $keys = array_column($cards, 'key');
+        $sourcePosition = array_search($sourceKey, $keys, true);
+        $targetPosition = array_search($targetKey, $keys, true);
+        if ($sourcePosition === false || $targetPosition === false) $this->fail(422, 'Проверьте порядок карточек.');
+        $moved = array_splice($cards, $sourcePosition, 1)[0];
+        $targetPosition = array_search($targetKey, array_column($cards, 'key'), true);
+        array_splice($cards, $targetPosition + ($insertBefore ? 0 : 1), 0, [$moved]);
+        foreach ($cards as $position => $card) {
+            DB::table($tables[$card['type']])->where('id', $card['id'])->update(['sort_order' => $position]);
+        }
+        DB::table('boards')->where('id', $board->id)->update(['lists_order_customized' => true]);
+        return $this->success(['updated' => true]);
     }
 
     private function saveBoard(array $input, int $userId, bool $update): JsonResponse
@@ -386,10 +576,13 @@ class WorkspaceController
             // On a manually arranged board, new unpinned lists still appear first.
             // Keep existing positions intact, including those of pinned lists.
             $firstOrder = DB::table('task_lists')->where('board_id', $boardId)->min('sort_order');
+            $firstNoteOrder = DB::table('notes')->where('board_id', $boardId)->min('sort_order');
+            $orders = array_filter([$firstOrder, $firstNoteOrder], fn ($order) => $order !== null);
+            $firstOrder = $orders === [] ? 0 : min($orders);
             $id = DB::table('task_lists')->insertGetId($fields + [
                 'user_id' => $boardOwnerId,
                 'board_id' => $boardId,
-                'sort_order' => $firstOrder === null ? 0 : (int) $firstOrder - 1,
+                'sort_order' => (int) $firstOrder - 1,
             ]);
         }
         $flag = $flagId === null ? null : DB::table('user_flags')->where('id', $flagId)
@@ -896,6 +1089,9 @@ class WorkspaceController
         return ['id' => (int) $note->id, 'board_id' => (int) $note->board_id, 'title' => $note->title,
             'body' => $note->body, 'annotation' => $note->annotation, 'created_at' => $note->created_at,
             'is_important' => (bool) $note->is_important, 'theme' => $note->theme,
+            'is_pinned' => (bool) $note->is_pinned, 'sort_order' => (int) $note->sort_order,
+            'image' => $note->image_mime === null ? null : ['url' => '/api/notes/' . (int) $note->id . '/image',
+                'mime' => $note->image_mime, 'offset' => (int) $note->image_offset],
             'flag' => $note->flag_id === null ? null : ['id' => (int) $note->flag_id,
                 'name' => $note->flag_name, 'color' => $note->flag_color]];
     }

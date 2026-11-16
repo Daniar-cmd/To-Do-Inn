@@ -34,6 +34,7 @@ test('workspace components render safely and guard editing/deletion event handle
   try {
     const { ListCard } = await server.ssrLoadModule('/js/workspace/ListCard.jsx');
     const { ListTask } = await server.ssrLoadModule('/js/workspace/ListTask.jsx');
+    const { WorkspaceNoteCard } = await server.ssrLoadModule('/js/workspace/WorkspaceNoteCard.jsx');
     const { ListDatePicker } = await server.ssrLoadModule('/js/workspace/ListDatePicker.jsx');
     const { FlagIcon } = await server.ssrLoadModule('/js/ui/icons.jsx');
     await t.test('all flags use the task SVG and default to the surrounding text color', () => {
@@ -170,6 +171,14 @@ test('workspace components render safely and guard editing/deletion event handle
         if (previousWindow === undefined) delete globalThis.window;
         else globalThis.window = previousWindow;
       }
+    });
+    await t.test('fullscreen note stays inside the shared workspace viewer', () => {
+      const note = { id: 51, board_id: 7, title: 'Fullscreen note', body: 'Text', annotation: '', created_at: '2026-11-16T12:00:00Z', is_important: false, theme: 'blue', is_pinned: false, sort_order: 1, flag: null, image: null };
+      const html = renderToStaticMarkup(React.createElement(WorkspaceNoteCard, { note, isFullscreen: true }));
+      assert.match(html, /class="task-list-card workspace-note-card/);
+      assert.doesNotMatch(html, /list-focus-overlay|task-list-card__open-button/);
+      const compact = renderToStaticMarkup(React.createElement(WorkspaceNoteCard, { note, onDrag: { onOpen() {} } }));
+      assert.match(compact, /task-list-card__open-button/);
     });
     await t.test('mobile board card opens the desktop task popup on click and keeps typed text', () => {
       const previousDocument = globalThis.document;
@@ -892,6 +901,10 @@ test('desktop fullscreen list keeps one stable scrolling layout', () => {
   const overlay = css.match(/\.list-focus-overlay\.workspace-shell\s*\{([^}]*)\}/)?.[1];
   assert.match(overlay, /position: fixed;[^}]*inset: 0;[^}]*display: flex;[^}]*overflow-y: auto/);
   assert.match(css, /\.list-focus-overlay__dialog\s*\{[^}]*flex: none;[^}]*margin: auto 0/);
+  assert.match(css, /\.list-focus-overlay__dialog\.is-leaving-next,\s*\.list-focus-overlay__dialog\.is-leaving-previous\s*\{[^}]*position: absolute/);
+  const slideIn = css.slice(css.indexOf('@keyframes list-focus-slide-in-next'), css.indexOf('@keyframes list-focus-slide-in-previous'));
+  assert.match(slideIn, /opacity: 0\.7;[\s\S]*?transform: translate\(44px, 0\)/);
+  assert.doesNotMatch(slideIn, /scale\(/);
   assert.doesNotMatch(css, /\.list-focus-overlay\.workspace-shell\.is-short-list/);
 });
 

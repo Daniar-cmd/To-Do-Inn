@@ -79,6 +79,23 @@ export async function createWorkspaceNote(data, csrfToken) {
   return request(workspaceEndpoint, { method: 'POST', data: { action: 'create_note', ...data }, csrfToken });
 }
 
+export async function uploadNoteImage(noteId, file, offset, csrfToken) {
+  const data = new FormData();
+  data.append('image', file);
+  data.append('offset', String(offset));
+  const response = await fetch(`/api/notes/${noteId}/image`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrfToken }, body: data,
+  });
+  return readResponse(response);
+}
+
+export async function removeNoteImage(noteId, csrfToken) {
+  const response = await fetch(`/api/notes/${noteId}/image`, {
+    method: 'DELETE', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrfToken },
+  });
+  return readResponse(response);
+}
+
 export async function createBoard(data, csrfToken) {
   return request(workspaceEndpoint, { method: 'POST', data: { action: 'create_board', ...data }, csrfToken });
 }

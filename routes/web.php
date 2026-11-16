@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\WorkspaceController;
 use App\Http\Middleware\PrepareProfileRequest;
+use App\Http\Middleware\PrepareNoteImageRequest;
 use App\Http\Middleware\PrepareWorkspaceRequest;
 use App\Http\Middleware\VerifyApiCsrfToken;
 use Illuminate\Support\Facades\Route;
@@ -24,3 +25,8 @@ Route::match(['GET', 'POST', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TRACE
     // Preserve legacy auth/method/content-type ordering; preparation still explicitly invokes CSRF.
     ->withoutMiddleware(VerifyApiCsrfToken::class)
     ->middleware(['auth', PrepareWorkspaceRequest::class, 'throttle:workspace']);
+
+Route::match(['GET', 'POST', 'DELETE', 'HEAD', 'PUT', 'PATCH', 'OPTIONS', 'TRACE', 'CONNECT'], '/api/notes/{noteId}/image', [WorkspaceController::class, 'noteImage'])
+    ->whereNumber('noteId')
+    ->withoutMiddleware(VerifyApiCsrfToken::class)
+    ->middleware(['auth', PrepareNoteImageRequest::class, 'throttle:workspace']);

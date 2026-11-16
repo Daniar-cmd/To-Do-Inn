@@ -9,12 +9,41 @@ export function moveListToSlot(lists, sourceId, targetId) {
   return result;
 }
 
+export function workspaceCards(lists, notes) {
+  return [
+    ...lists.map((item) => ({ ...item, cardType: 'list', cardKey: `list:${item.id}` })),
+    ...notes.map((item) => ({ ...item, cardType: 'note', cardKey: `note:${item.id}` })),
+  ].sort((left, right) => Number(right.is_pinned) - Number(left.is_pinned)
+    || Number(left.sort_order) - Number(right.sort_order) || left.cardKey.localeCompare(right.cardKey));
+}
+
+export function moveWorkspaceCardToSlot(cards, sourceKey, targetKey) {
+  const source = cards.findIndex((item) => item.cardKey === sourceKey);
+  const target = cards.findIndex((item) => item.cardKey === targetKey);
+  if (source < 0 || target < 0 || source === target || cards[source].is_pinned
+      || cards[target].is_pinned || cards[source].board_id !== cards[target].board_id) return cards;
+  const result = [...cards];
+  const [item] = result.splice(source, 1);
+  const targetAfterRemoval = result.findIndex((candidate) => candidate.cardKey === targetKey);
+  result.splice(targetAfterRemoval + (source > target ? 0 : 1), 0, item);
+  return result;
+}
+
 export function adjacentLists(lists, focusedId) {
   const index = lists.findIndex((list) => list.id === focusedId);
   if (index < 0 || lists.length < 2) return { previous: null, next: null };
   return {
     previous: lists[(index - 1 + lists.length) % lists.length],
     next: lists[(index + 1) % lists.length],
+  };
+}
+
+export function adjacentWorkspaceCards(cards, focusedKey) {
+  const index = cards.findIndex((card) => card.cardKey === focusedKey);
+  if (index < 0 || cards.length < 2) return { previous: null, next: null };
+  return {
+    previous: cards[(index - 1 + cards.length) % cards.length],
+    next: cards[(index + 1) % cards.length],
   };
 }
 
@@ -60,7 +89,7 @@ export function findGridTarget(cells, bounds, x, y) {
       distance = nextDistance;
     }
   }
-  return nearest && !nearest.is_pinned ? nearest.id : null;
+  return nearest && !nearest.is_pinned ? (nearest.key ?? nearest.id) : null;
 }
 
 // Keep the visual gap nearly constant by using a fine grid track step.

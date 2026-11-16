@@ -150,7 +150,7 @@
   .list-focus-overlay__peek.is-following-next { top: auto; right: 28px; bottom: max(10px, env(safe-area-inset-bottom)); left: 28px; pointer-events: none; }
   .list-focus-overlay__peek.is-following-previous { right: 28px; left: 28px; pointer-events: none; }
   .list-focus-overlay__peek-card { width: 100%; height: 100%; pointer-events: none; }
-  .list-focus-overlay__peek-card > .task-list-card { min-height: 100%; max-height: none; overflow: hidden; padding: 12px 16px; border-radius: 13px; box-shadow: none; }
+  .list-focus-overlay__peek-card > :is(.task-list-card, .workspace-note-card) { min-height: 100%; max-height: none; overflow: hidden; padding: 12px 16px; border-radius: 13px; box-shadow: none; }
   .list-focus-overlay__peek .task-list-card__header > .task-list-card__drag-handle,
   .list-focus-overlay__peek .task-list-card__actions { display: none; }
 
@@ -175,13 +175,13 @@
   }
 
   .list-focus-overlay__dialog::-webkit-scrollbar { display: none; }
-  .list-focus-overlay__dialog > .task-list-card { min-height: 100%; max-height: none; overflow: visible; padding-inline: 17px; }
+  .list-focus-overlay__dialog > :is(.task-list-card, .workspace-note-card) { min-height: 100%; max-height: none; overflow: visible; padding-inline: 17px; }
   .list-focus-overlay__dialog > .task-list-card .task-list-card__completed { margin-inline: -17px; padding-inline: 17px; }
   .list-focus-overlay__dialog.is-opening { animation: list-focus-mobile-open 220ms cubic-bezier(.2,.8,.2,1) backwards; }
   .list-focus-overlay__dialog.is-entering-next { animation: list-focus-mobile-in-next 220ms cubic-bezier(.2,.8,.2,1) backwards; }
   .list-focus-overlay__dialog.is-entering-previous { animation: list-focus-mobile-in-previous 220ms cubic-bezier(.2,.8,.2,1) backwards; }
-  .list-focus-overlay__dialog.is-leaving-next { z-index: 1; animation: list-focus-mobile-out-next 220ms cubic-bezier(.2,.8,.2,1) both; }
-  .list-focus-overlay__dialog.is-leaving-previous { z-index: 1; animation: list-focus-mobile-out-previous 220ms cubic-bezier(.2,.8,.2,1) both; }
+  .list-focus-overlay__dialog.is-leaving-next { z-index: 1; top: 50%; right: 14px; left: 14px; width: auto; margin: 0; animation: list-focus-mobile-out-next 220ms cubic-bezier(.2,.8,.2,1) both; }
+  .list-focus-overlay__dialog.is-leaving-previous { z-index: 1; top: 50%; right: 14px; left: 14px; width: auto; margin: 0; animation: list-focus-mobile-out-previous 220ms cubic-bezier(.2,.8,.2,1) both; }
 
   .list-focus-overlay__dialog:has(.task-list-card__inline-composer.is-open) {
     top: calc(var(--focus-viewport-top, 0px) + 64px + env(safe-area-inset-top));
@@ -226,7 +226,7 @@
   .list-focus-overlay[data-swipe-commit] .list-focus-overlay__dialog,
   .list-focus-overlay[data-swipe-commit] .list-focus-overlay__peek { transition-duration: 440ms; transition-timing-function: cubic-bezier(.25,.8,.25,1); }
   .list-focus-overlay[data-swipe-commit] .task-list-card__actions { transition: opacity 180ms ease; }
-  .list-focus-overlay[data-swipe-commit] .list-focus-overlay__peek-card > .task-list-card { transition: padding 440ms cubic-bezier(.25,.8,.25,1); }
+  .list-focus-overlay[data-swipe-commit] .list-focus-overlay__peek-card > :is(.task-list-card, .workspace-note-card) { transition: padding 440ms cubic-bezier(.25,.8,.25,1); }
   .list-focus-overlay[data-swipe-commit] .list-focus-overlay__dialog { opacity: .78; }
   .list-focus-overlay[data-swipe-settling] .list-focus-overlay__peek-card > .task-list-card { box-shadow: 0 20px 55px rgb(0 0 0 / 22%); }
 
@@ -439,7 +439,10 @@
   .list-creator__name-field { min-width: 0; min-height: 50px; }
   .list-creator__name-field input { min-width: 0; font-size: .9rem; }
   .list-creator__options { padding: 0 10px 12px; }
+  .note-creator__expanded { padding-left: calc(10px + 24px + 8px); }
   .list-creator__toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
+  .list-creator__toolbar.note-creator__toolbar { flex-wrap: wrap; justify-content: flex-start; align-items: center; }
+  .list-creator__toolbar.note-creator__toolbar > .list-theme-picker { margin-left: 0; }
   .list-creator__toolbar .flag-picker { min-width: 0; flex: 0 1 108px; }
   .list-creator__date { min-width: 0; }
   .list-creator__date, .list-creator__date .list-date-picker { position: static; }

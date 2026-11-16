@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const source = await readFile(new URL('../../frontend/js/workspace/listGrid.js', import.meta.url), 'utf8');
-const { adjacentLists, cardBounds, findGridTarget, groupTasksByList, moveListToSlot, masonrySlots, verticalSwipe } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { adjacentLists, adjacentWorkspaceCards, cardBounds, findGridTarget, groupTasksByList, moveListToSlot, masonrySlots, verticalSwipe, workspaceCards } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const lists = [
   { id: 1, board_id: 10, is_pinned: true },
@@ -72,6 +72,19 @@ test('focused list has only its actual neighbors, wrapping at the ends', () => {
   assert.deepEqual([adjacentLists(items, 7).previous.id, adjacentLists(items, 7).next.id], [6, 1]);
   assert.deepEqual(adjacentLists(items, 99), { previous: null, next: null });
   assert.deepEqual(adjacentLists([{ id: 1 }], 1), { previous: null, next: null });
+});
+
+test('fullscreen navigation follows one ordered stream of lists and notes', () => {
+  const cards = workspaceCards(
+    [{ id: 1, sort_order: 2, is_pinned: false }, { id: 2, sort_order: 4, is_pinned: true }],
+    [{ id: 3, sort_order: 3, is_pinned: false }, { id: 4, sort_order: 1, is_pinned: false }],
+  );
+  assert.deepEqual(cards.map(({ cardKey }) => cardKey), ['list:2', 'note:4', 'list:1', 'note:3']);
+  const neighbors = adjacentWorkspaceCards(cards, 'note:4');
+  assert.equal(neighbors.previous.cardKey, 'list:2');
+  assert.equal(neighbors.next.cardKey, 'list:1');
+  assert.deepEqual(adjacentWorkspaceCards(cards, 'missing'), { previous: null, next: null });
+  assert.deepEqual(adjacentWorkspaceCards([{ cardKey: 'note:1' }], 'note:1'), { previous: null, next: null });
 });
 
 test('moving to a later slot shifts every intervening list one place left', () => {

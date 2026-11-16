@@ -1,7 +1,8 @@
 @use '../variables' as v;
 
 .list-creator { position: relative; z-index: 10; width: 100%; margin: 0; }
-.list-creator__mode-row { --creator-control-size: 52px; --creator-mode-toggle-size: 46.8px; display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
+.list-creator__mode-row { --creator-control-size: 52px; --creator-mode-toggle-size: 46.8px; display: flex; width: 100%; min-width: 0; align-items: flex-start; gap: 8px; }
+.list-creator__mode-row > .list-creator__mode-toggle { margin-top: 3px; }
 .list-creator__mode-row > form { min-width: 0; flex: 1; }
 .list-option-button.list-creator__mode-toggle { display: grid; width: var(--creator-mode-toggle-size); min-width: var(--creator-mode-toggle-size); height: var(--creator-mode-toggle-size); flex: none; place-items: center; padding: 0; }
 .list-creator__mode-row .list-creator__name-field { min-height: var(--creator-control-size); }
@@ -15,13 +16,21 @@
 .list-creator__mode-toggle[aria-pressed='true'] .list-creator__mode-icon.is-note { opacity: 0; transform: scale(.72) rotate(8deg); }
 .list-creator__mode-toggle[aria-pressed='true'] .list-creator__mode-icon.is-list { opacity: 1; transform: scale(1) rotate(0); }
 .list-creator__mode-icon svg { display: block; width: 17px; height: 17px; }
+.list-creator__mode-icon.is-note svg { width: 20px; height: 20px; }
 .list-creator__mode-icon.is-list svg { width: 20px; height: 20px; }
-.note-creator__expanded { padding: 0 14px 14px; animation: list-options-in 180ms ease both; }
-.note-creator__body { display: block; width: 100%; min-height: 76px; overflow: hidden; resize: none; padding: 10px 12px; border: 1px solid var(--workspace-border); border-radius: 8px; outline: 0; background: var(--workspace-bg); color: var(--workspace-text); font: inherit; font-size: .88rem; line-height: 1.5; }
-.note-creator__body:focus { border-color: #a9bdd8; box-shadow: 0 0 0 2px rgb(52 120 212 / 9%); }
+.note-creator__expanded { padding: 0 14px 14px calc(16px + 24px + 12px); animation: list-options-in 180ms ease both; }
+.note-creator__body { display: block; width: 100%; min-height: 76px; overflow: hidden; resize: none; padding: 14px 0 6px; border: 0; border-top: 1px solid var(--workspace-border); border-radius: 0; outline: 0; background: transparent; color: var(--workspace-text); font: inherit; font-size: .88rem; line-height: 1.5; }
+.note-creator__body:focus { border-top-color: #a9bdd8; box-shadow: 0 -2px 0 rgb(52 120 212 / 9%); }
 .note-creator__body::placeholder { color: var(--workspace-muted); }
-.note-creator__options { padding: 0; }
-.note-creator__toolbar { flex-wrap: wrap; }
+.list-creator__options.note-creator__options { padding: 0; }
+.note-creator__toolbar { min-height: 36px; flex-wrap: wrap; align-items: center; }
+.note-creator__toolbar > .list-theme-picker { min-height: 36px; align-items: center; }
+.note-creator__toolbar > .note-creator__attachment { align-self: center; }
+.note-creator__file-input { display: none; }
+.note-creator__image-preview { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; color: var(--workspace-muted); font-size: .76rem; }
+.note-creator__image-preview img { display: block; width: min(100%, 260px); max-height: 180px; object-fit: contain; object-position: left center; border-radius: 7px; }
+.note-creator__image-preview button, .workspace-note-card__image-remove { padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--workspace-muted); font: inherit; cursor: pointer; }
+.note-creator__image-preview button:hover, .workspace-note-card__image-remove:hover { background: var(--workspace-hover); color: var(--workspace-text); }
 
 .list-option-button.list-creator__mode-toggle:focus-visible { outline: 2px solid var(--workspace-text); outline-offset: 3px;
 }

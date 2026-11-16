@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createWorkspaceNote, updateWorkspace } from '../api.js';
-import { FlagIcon, PlusIcon, StarIcon } from '../ui/icons.jsx';
+import { createWorkspaceNote, updateWorkspace, uploadNoteImage } from '../api.js';
+import { FlagIcon, PaperclipIcon, PlusIcon, StarIcon } from '../ui/icons.jsx';
 import { listThemes, uiText } from '../ui/text.js';
 
-export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onFlagCreated, isSaving, onSavingChange }) {
-  const [title, setTitle] = useState('');
+export function WorkspaceNoteCreator({ boardId, title, onTitleChange, flags, csrfToken, onCreated, onFlagCreated, onImageError, isSaving, onSavingChange }) {
   const [body, setBody] = useState('');
   const [annotation, setAnnotation] = useState('');
   const [important, setImportant] = useState(false);
@@ -14,8 +13,19 @@ export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onF
   const [creatingFlag, setCreatingFlag] = useState(false);
   const [feedback, setFeedback] = useState('');
   const bodyRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [imageOffset, setImageOffset] = useState(0);
+  const [imagePreview, setImagePreview] = useState('');
   const expanded = title.trim().length > 0;
   const selectedFlag = flags.find((flag) => flag.id === selectedFlagId);
+
+  useEffect(() => {
+    if (!imageFile) { setImagePreview(''); return undefined; }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
 
   useEffect(() => {
     const field = bodyRef.current;
@@ -25,7 +35,7 @@ export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onF
   }, [body, expanded]);
 
   function reset() {
-    setTitle('');
+    onTitleChange('');
     setBody('');
     setAnnotation('');
     setImportant(false);
@@ -33,6 +43,8 @@ export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onF
     setSelectedFlagId(null);
     setNewFlagName('');
     setFeedback('');
+    setImageFile(null);
+    setImageOffset(0);
   }
 
   function chooseFlag(id, event) {
@@ -79,6 +91,17 @@ export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onF
         flag_id: selectedFlagId,
         new_flag_name: newFlagName.trim(),
       }, csrfToken);
+      if (imageFile) {
+        try {
+          await uploadNoteImage(note.id, imageFile, imageOffset, csrfToken);
+          note.image = { url: `/api/notes/${note.id}/image`, offset: imageOffset };
+        } catch (error) {
+          onCreated(note);
+          reset();
+          onImageError?.(error.message);
+          return;
+        }
+      }
       onCreated(note);
       reset();
     } catch (error) {
@@ -97,13 +120,22 @@ export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onF
     <div className="list-creator__name-row">
       <button className="list-creator__cancel" type="button" aria-label={expanded ? 'Отменить создание заметки' : 'Ввести название новой заметки'} title={expanded ? 'Отменить создание' : uiText.creator.newNote} disabled={isSaving} onClick={() => expanded ? cancel() : document.getElementById('new-note-title')?.focus()}><PlusIcon /></button>
       <label className="list-creator__name-field" htmlFor="new-note-title">
-        <input id="new-note-title" name="note-title" type="text" maxLength="80" placeholder={uiText.creator.newNote} autoComplete="off" aria-label="Название новой заметки" value={title} onChange={(event) => { setTitle(event.target.value); setFeedback(''); }} />
+        <input id="new-note-title" name="note-title" type="text" maxLength="80" placeholder={uiText.creator.newNote} autoComplete="off" aria-label="Название новой заметки" value={title} onChange={(event) => { onTitleChange(event.target.value); setFeedback(''); }} />
       </label>
-      {expanded && <button className="list-creator__submit" type="submit" disabled={isSaving}>{isSaving ? 'Сохраняем…' : 'Создать заметку'}</button>}
+      {expanded && <button className="list-creator__submit" type="submit" disabled={isSaving}>{isSaving ? 'Сохраняем…' : 'Создать'}</button>}
     </div>
 
     {expanded && <div className="note-creator__expanded">
       <textarea ref={bodyRef} className="note-creator__body" name="note-body" rows="3" maxLength="1200" placeholder="Текст заметки" aria-label="Текст заметки" value={body} onChange={(event) => setBody(event.target.value)} />
+      {imagePreview && <div className="note-creator__image-preview"><img src={imagePreview} alt="Предпросмотр изображения заметки" /><button type="button" onClick={() => { setImageFile(null); setImageOffset(0); }}>Убрать изображение</button></div>}
+      <input ref={imageInputRef} className="note-creator__file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/avif,.png,.jpg,.jpeg,.webp,.gif,.heic,.avif" aria-label="Выбрать изображение" onChange={(event) => {
+        const file = event.target.files?.[0]; event.target.value = '';
+        if (!file) return;
+        if (file.size > 1_048_576) { setFeedback('Изображение должно быть не больше 1 МБ.'); return; }
+        const field = bodyRef.current;
+        setImageOffset(field?.selectionStart ?? body.length);
+        setImageFile(file); setFeedback('');
+      }} />
       <div className="list-creator__options note-creator__options">
         <div className="list-creator__toolbar note-creator__toolbar">
           <button className={`list-option-button${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} aria-label={important ? 'Убрать важность заметки' : 'Сделать заметку важной'} title="Важная заметка" onClick={() => setImportant((current) => !current)}>
@@ -118,6 +150,8 @@ export function WorkspaceNoteCreator({ boardId, flags, csrfToken, onCreated, onF
               <textarea id="new-note-annotation" aria-label="Аннотация заметки" maxLength="200" placeholder="Аннотация" value={annotation} onChange={(event) => setAnnotation(event.target.value)} />
             </div>
           </details>
+
+          <button className="list-option-button note-creator__attachment" type="button" aria-label="Прикрепить изображение" title="Прикрепить изображение" onClick={() => imageInputRef.current?.click()}><PaperclipIcon /></button>
 
           <details className="flag-picker">
             <summary className={`list-option-button${selectedFlag || newFlagName.trim() ? ' is-selected' : ''}`} aria-label="Назначить флаг заметке" title="Назначить флаг">

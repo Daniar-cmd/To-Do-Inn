@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -889,9 +890,66 @@ class WorkspaceTest extends DatabaseTestCase
             ->assertUnprocessable()->assertJsonPath('error', 'Введите название списка.');
     }
 
+    public function test_note_image_upload_is_private_stored_once_and_returned_inline(): void
+    {
+        $noteId = $this->postWorkspace(['action' => 'create_note', 'board_id' => $this->board,
+            'title' => 'Image note', 'body' => 'A😀B'])->assertCreated()->json('data.note.id');
+        $png = "\x89PNG\r\n\x1a\n".str_repeat("\0", 16);
+
+        $this->noteImageRequest('POST', $noteId, ['offset' => '3'], [
+            'image' => UploadedFile::fake()->createWithContent('photo.png', $png),
+        ])->assertOk()->assertJsonPath('data.image.mime', 'image/png')->assertJsonPath('data.image.offset', 3);
+        $this->assertDatabaseHas('notes', ['id' => $noteId, 'image_mime' => 'image/png', 'image_offset' => 3]);
+        $this->request()->assertJsonPath('data.notes.0.image.offset', 3);
+        $this->noteImageRequest('GET', $noteId)->assertOk()->assertHeader('Content-Type', 'image/png')
+            ->assertHeader('X-Content-Type-Options', 'nosniff')->assertContent($png);
+
+        $gif = 'GIF89a'.str_repeat("\0", 12);
+        $this->noteImageRequest('POST', $noteId, ['offset' => '99'], [
+            'image' => UploadedFile::fake()->createWithContent('replacement.gif', $gif),
+        ])->assertOk()->assertJsonPath('data.image.mime', 'image/gif')->assertJsonPath('data.image.offset', 4);
+        $this->noteImageRequest('GET', $noteId)->assertHeader('Content-Type', 'image/gif')->assertContent($gif);
+        $this->noteImageRequest('DELETE', $noteId)->assertOk()->assertJsonPath('data.removed', true);
+        $this->noteImageRequest('GET', $noteId)->assertNotFound();
+    }
+
+    public function test_note_image_upload_checks_csrf_type_size_and_note_ownership(): void
+    {
+        $noteId = $this->postWorkspace(['action' => 'create_note', 'board_id' => $this->board, 'title' => 'Private image note'])
+            ->assertCreated()->json('data.note.id');
+        $png = "\x89PNG\r\n\x1a\n".str_repeat("\0", 16);
+        $this->noteImageRequest('POST', $noteId, ['offset' => '0'], [
+            'image' => UploadedFile::fake()->createWithContent('missing-token.png', $png),
+        ], false)->assertForbidden()->assertJsonPath('error', 'Сессия истекла. Обновите страницу.');
+        $this->noteImageRequest('POST', $noteId, ['offset' => '0'], [
+            'image' => UploadedFile::fake()->createWithContent('not-image.bin', 'plain text'),
+        ])->assertUnprocessable()->assertJsonPath('error', 'Поддерживаются PNG, JPG, WebP, GIF, HEIC и AVIF.');
+        $this->noteImageRequest('POST', $noteId, ['offset' => '0'], [
+            'image' => UploadedFile::fake()->createWithContent('oversized.png', $png.str_repeat('x', 1_048_576)),
+        ])->assertUnprocessable()->assertJsonPath('error', 'Выберите изображение размером не больше 1 МБ.');
+
+        $foreignBoard = $this->board($this->other->id, 'Image owner board');
+        $foreignNoteId = DB::table('notes')->insertGetId(['user_id' => $this->other->id, 'board_id' => $foreignBoard, 'title' => 'Foreign note']);
+        $this->noteImageRequest('POST', $foreignNoteId, ['offset' => '0'], [
+            'image' => UploadedFile::fake()->createWithContent('foreign.png', $png),
+        ])->assertNotFound();
+        $this->noteImageRequest('GET', $foreignNoteId)->assertNotFound();
+    }
+
     private function postWorkspace(array $body): TestResponse
     {
         return $this->request('POST', body: $body);
+    }
+
+    private function noteImageRequest(string $method, int $noteId, array $parameters = [], array $files = [], bool $token = true): TestResponse
+    {
+        $this->withCredentials()->withCookie(config('session.cookie'), $this->app['session.store']->getId());
+        Auth::forgetGuards();
+        $server = ['CONTENT_TYPE' => 'multipart/form-data; boundary=workspace-test', 'HTTP_SEC_FETCH_SITE' => 'same-origin'];
+        if ($token) {
+            $server['HTTP_X_CSRF_TOKEN'] = $this->app['session.store']->token();
+        }
+        return $this->call($method, '/api/notes/'.$noteId.'/image', $parameters, $this->prepareCookiesForRequest(), $files, $server);
     }
 
     private function request(string $method = 'GET', array $body = [], string $query = '', ?string $raw = null,

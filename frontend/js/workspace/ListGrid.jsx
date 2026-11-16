@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { adjacentLists, cardBounds, findGridTarget, masonrySlots, moveListToSlot, verticalSwipe } from './listGrid.js';
+import { adjacentWorkspaceCards, cardBounds, findGridTarget, masonrySlots, moveWorkspaceCardToSlot, verticalSwipe, workspaceCards } from './listGrid.js';
 
 const motionOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
 const carouselDuration = 440;
@@ -37,16 +37,24 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
   const focusScrollTop = useRef(0);
   const focusedIdRef = useRef(focusedId);
   focusedIdRef.current = focusedId;
-  const listsRef = useRef(lists);
-  listsRef.current = lists;
-  const orderKey = `${lists.map((list) => list.id).join(',')}|${notes.map((note) => note.id).join(',')}`;
-  const focusedIndex = lists.findIndex((list) => list.id === focusedId);
-  const focusedList = lists[focusedIndex];
+  const orderedCards = workspaceCards(lists, notes);
+  const cardsRef = useRef(orderedCards);
+  cardsRef.current = orderedCards;
+  const orderKey = orderedCards.map((item) => item.cardKey).join(',');
+  const focusedIndex = orderedCards.findIndex((card) => card.cardKey === focusedId);
+  const focusedCard = orderedCards[focusedIndex];
   const isFocusOpen = focusedId !== null;
-  const { previous: previousList, next: nextList } = adjacentLists(lists, focusedId);
-  const followingNext = nextList && adjacentLists(lists, nextList.id).next;
-  const followingPrevious = previousList && adjacentLists(lists, previousList.id).previous;
-  const leavingList = slide && !slide.settled && lists.find((list) => list.id === slide.fromId);
+  const { previous: previousCard, next: nextCard } = adjacentWorkspaceCards(orderedCards, focusedId);
+  const followingNext = nextCard && adjacentWorkspaceCards(orderedCards, nextCard.cardKey).next;
+  const followingPrevious = previousCard && adjacentWorkspaceCards(orderedCards, previousCard.cardKey).previous;
+  const leavingCard = slide && !slide.settled && orderedCards.find((card) => card.cardKey === slide.fromKey);
+
+  function renderWorkspaceCard(card, dragHandle, isFullscreen = false) {
+    if (!card) return null;
+    return card.cardType === 'note'
+      ? renderNote?.(card, dragHandle, isFullscreen)
+      : children(card, dragHandle, isFullscreen);
+  }
 
   function cardFor(id) {
     return slots.current.get(id)?.querySelector(':scope > .task-list-card, :scope > .workspace-note-card');
@@ -65,7 +73,7 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
     card?.getAnimations().forEach((animation) => animation.cancel());
   }
 
-  function fitMasonrySlots(orderedLists = lists) {
+  function fitMasonrySlots(cards = orderedCards) {
     const grid = gridRef.current;
     if (!grid) return;
     // Old explicit column positions can create implicit tracks after narrowing
@@ -81,10 +89,7 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
     const columns = styles.gridTemplateColumns.trim().split(/\s+/).length;
     layoutWidth.current = grid.clientWidth;
     // Transforms belong to the animation, not to the layout's actual card height.
-    const layoutItems = [
-      ...orderedLists.map((item) => ({ key: listSlotKey(item.id) })),
-      ...notes.map((note) => ({ key: noteSlotKey(note.id) })),
-    ];
+    const layoutItems = cards.map((item) => ({ key: item.cardKey }));
     const positions = masonrySlots(layoutItems.map((item) => cardFor(item.key)?.offsetHeight || 0), columns, rowHeight, rowGap, cardGap);
     for (const [index, item] of layoutItems.entries()) {
       const slot = slots.current.get(item.key);
@@ -102,7 +107,7 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
   function animateLayout(previous, draggedId = null) {
     const next = new Map();
     for (const id of slots.current.keys()) {
-      if (draggedId !== null && id === listSlotKey(draggedId)) continue;
+      if (draggedId !== null && id === draggedId) continue;
       const card = cardFor(id);
       if (!card) continue;
       stopAnimation(card);
@@ -141,7 +146,7 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
   }, [orderKey, dragId, focusedId]);
 
   useEffect(() => {
-    if (focusedId !== null && !lists.some((list) => list.id === focusedId)) setFocusedId(null);
+    if (focusedId !== null && !orderedCards.some((card) => card.cardKey === focusedId)) setFocusedId(null);
   }, [orderKey, focusedId]);
 
   useLayoutEffect(() => {
@@ -422,9 +427,9 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
         return;
       }
       const isTextEntry = event.target.closest?.('input, textarea, select, [contenteditable="true"]');
-      if (!isTextEntry && (event.metaKey || event.ctrlKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && listsRef.current.length > 1) {
+      if (!isTextEntry && (event.metaKey || event.ctrlKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && cardsRef.current.length > 1) {
         event.preventDefault();
-        focusAdjacentList(event.key === 'ArrowRight' ? 1 : -1);
+        focusAdjacentCard(event.key === 'ArrowRight' ? 1 : -1);
         return;
       }
       if (event.key !== 'Tab') return;
@@ -487,15 +492,18 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
 
   useEffect(() => () => stopGesture.current?.(false, false), []);
 
-  function startDrag(event, list) {
-    if (event.button !== 0 || !event.isPrimary || list.is_pinned || savingRef.current || gesture.current || focusedId !== null) return;
+  function startDrag(event, item, kind = 'list') {
+    const items = orderedCards;
+    const slotKey = kind === 'note' ? noteSlotKey : listSlotKey;
+    const sourceKey = slotKey(item.id);
+    if (event.button !== 0 || !event.isPrimary || item.is_pinned || savingRef.current || gesture.current || focusedId !== null) return;
     const grid = gridRef.current;
-    const card = cardFor(listSlotKey(list.id));
+    const card = cardFor(slotKey(item.id));
     if (!grid || !card) return;
     const handle = event.currentTarget;
     const initialBounds = card.getBoundingClientRect();
     const current = {
-      id: list.id, pointerId: event.pointerId, active: false, target: list.id,
+      id: item.id, key: sourceKey, kind, pointerId: event.pointerId, active: false, target: sourceKey,
       startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY,
       offsetX: event.clientX - initialBounds.left, offsetY: event.clientY - initialBounds.top,
       cells: [], frame: null, hitBounds: null, minHeight: grid.style.minHeight,
@@ -506,7 +514,7 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
     function updatePosition() {
       if (!current.active) return;
       const bounds = grid.getBoundingClientRect();
-      const sourceSlot = slots.current.get(listSlotKey(list.id));
+      const sourceSlot = slots.current.get(current.key);
       if (!sourceSlot) { void finish(false); return; }
       const cell = sourceSlot.getBoundingClientRect();
       const left = Math.max(bounds.left, Math.min(current.x - current.offsetX, bounds.right - initialBounds.width));
@@ -517,11 +525,11 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
       // only the original cells, independently of the live preview geometry.
       const target = findGridTarget(current.cells, current.hitBounds, current.x + window.scrollX, current.y + window.scrollY);
       if (target === current.target) return;
-      const reordered = target === null ? lists : moveListToSlot(lists, list.id, target);
+      const reordered = target === null ? items : moveWorkspaceCardToSlot(items, current.key, target);
       const previous = capturePositions();
       // Preview the actual final masonry layout, not scaled cards in old cells.
       fitMasonrySlots(reordered);
-      animateLayout(previous, list.id);
+      animateLayout(previous, current.key);
       const destination = sourceSlot.getBoundingClientRect();
       card.style.transform = `translate(${left - destination.left}px, ${top - destination.top}px)`;
       current.target = target;
@@ -551,18 +559,18 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
           top: bounds.top + window.scrollY, bottom: bounds.bottom + window.scrollY };
         // Do not let a shorter preview collapse the page and move the pointer's target.
         grid.style.minHeight = `${bounds.height}px`;
-        current.cells = lists.map((item) => {
-          const rect = slots.current.get(listSlotKey(item.id)).getBoundingClientRect();
-          return { id: item.id, is_pinned: item.is_pinned, left: rect.left + window.scrollX,
+        current.cells = items.map((candidate) => {
+          const rect = slots.current.get(candidate.cardKey).getBoundingClientRect();
+          return { key: candidate.cardKey, is_pinned: candidate.is_pinned, left: rect.left + window.scrollX,
             right: rect.right + window.scrollX, top: rect.top + window.scrollY, bottom: rect.bottom + window.scrollY };
         });
         lastPositions.current = capturePositions();
         for (const id of slots.current.keys()) stopAnimation(cardFor(id));
         current.active = true;
         setError('');
-        setDragId(list.id);
+        setDragId(current.key);
         document.body.classList.add('is-list-dragging');
-        setAnnouncement(`Перемещение списка «${list.name}». Escape — отменить.`);
+        setAnnouncement(`Перемещение ${kind === 'note' ? 'заметки' : 'списка'} «${item.title || item.name}». Escape — отменить.`);
         current.frame = window.requestAnimationFrame(tick);
       }
       if (current.active) pointer.preventDefault();
@@ -592,15 +600,16 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
       }
       if (!notify || !current.active) return;
       setDragId(null);
-      if (!commit || current.target === null || current.target === current.id) {
+      if (!commit || current.target === null || current.target === current.key) {
         setAnnouncement('Перемещение отменено.');
         return;
       }
       savingRef.current = true;
       setSaving(true);
       try {
-        await onSwap(current.id, current.target);
-        setAnnouncement('Порядок списков сохранён.');
+        const target = orderedCards.find((candidate) => candidate.cardKey === current.target);
+        await onSwap(current.id, target.id, kind, target.cardType);
+        setAnnouncement('Порядок карточек сохранён.');
       } catch (err) {
         setError(err.message);
         setAnnouncement('Не удалось сохранить порядок. Изменения отменены.');
@@ -631,14 +640,14 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
     window.addEventListener('resize', cancel);
   }
 
-  function focusAdjacentList(direction) {
-    if (listsRef.current.length < 2) return;
-    const adjacent = adjacentLists(listsRef.current, focusedIdRef.current);
-    const nextId = (direction > 0 ? adjacent.next : adjacent.previous)?.id;
-    if (nextId === undefined) return;
+  function focusAdjacentCard(direction) {
+    if (cardsRef.current.length < 2) return;
+    const adjacent = adjacentWorkspaceCards(cardsRef.current, focusedIdRef.current);
+    const nextKey = (direction > 0 ? adjacent.next : adjacent.previous)?.cardKey;
+    if (nextKey === undefined) return;
     window.clearTimeout(slideTimer.current);
-    setSlide({ fromId: focusedIdRef.current, direction });
-    setFocusedId(nextId);
+    setSlide({ fromKey: focusedIdRef.current, direction });
+    setFocusedId(nextKey);
     if (!window.matchMedia('(max-width: 700px)').matches) {
       window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
     }
@@ -707,7 +716,7 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
     const canScroll = !start.fromPreview && dialog && (direction > 0
       ? dialog.scrollTop < dialog.scrollHeight - dialog.clientHeight - 2
       : dialog.scrollTop > 2);
-    if (canScroll || listsRef.current.length < 2) return;
+    if (canScroll || cardsRef.current.length < 2) return;
     event.preventDefault();
     if (start.direction && start.direction !== direction) start.metrics = null;
     start.direction = direction;
@@ -727,8 +736,9 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
       ? dialog.scrollTop < dialog.scrollHeight - dialog.clientHeight - 2
       : dialog.scrollTop > 2);
     if (!start.scrolled && direction && (!start.direction || direction === start.direction) && !canScroll && (!start.fromPreview || direction === start.previewDirection)) {
-      const nextId = (direction > 0 ? adjacentLists(listsRef.current, focusedIdRef.current).next : adjacentLists(listsRef.current, focusedIdRef.current).previous)?.id;
-      if (nextId === undefined) return;
+      const adjacent = adjacentWorkspaceCards(cardsRef.current, focusedIdRef.current);
+      const nextKey = (direction > 0 ? adjacent.next : adjacent.previous)?.cardKey;
+      if (nextKey === undefined) return;
       mobileSliding.current = true;
       const preview = overlay?.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-next' : '.list-focus-overlay__peek.is-previous');
       const distance = start.metrics?.distance || Math.abs((dialogRef.current?.getBoundingClientRect().top || 0) - (preview?.getBoundingClientRect().top || 0));
@@ -736,8 +746,8 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
       showSwipe(-direction * distance, direction, true);
       window.clearTimeout(slideTimer.current);
       slideTimer.current = window.setTimeout(() => {
-        setSlide({ fromId: focusedIdRef.current, direction, settled: true });
-        setFocusedId(nextId);
+        setSlide({ fromKey: focusedIdRef.current, direction, settled: true });
+        setFocusedId(nextKey);
       }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : carouselDuration);
     } else if (overlay) {
       overlay.dataset.swipeSettling = 'true';
@@ -767,48 +777,51 @@ export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, ch
     };
   }, [focusedId]);
 
-  function openList(id, target) {
+  function openCard(key, target) {
     if (savingRef.current || gesture.current?.active) return;
     setSlide(null);
     focusReturn.current = target;
     focusScrollTop.current = window.scrollY;
-    setFocusedId(id);
+    setFocusedId(key);
   }
 
   return <>
     <p className="list-grid-announcement" role="status" aria-live="polite">{announcement}</p>
     {error && <p className="task-list-card__error" role="alert">{error}</p>}
     <div ref={gridRef} className={`workspace-lists__items list-grid${dragId !== null ? ' is-dragging' : ''}`} aria-busy={saving}>
-      {lists.map((list) => <div key={list.id} ref={(node) => { if (node) slots.current.set(listSlotKey(list.id), node); else slots.current.delete(listSlotKey(list.id)); }} className={`list-grid__slot${list.id === dragId ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
+      {lists.map((list) => <div key={list.id} ref={(node) => { if (node) slots.current.set(listSlotKey(list.id), node); else slots.current.delete(listSlotKey(list.id)); }} className={`list-grid__slot${listSlotKey(list.id) === dragId ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
         if (focusedId !== null || event.target.closest('.task-list-card__meta-tags, .task-list-card__task-title, [role="dialog"], [role="alertdialog"], button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
-        openList(list.id, event.currentTarget);
+        openCard(listSlotKey(list.id), event.currentTarget);
       }}>
         {children(list, {
           onPointerDown: (event) => startDrag(event, list),
           disabled: saving || focusedId !== null,
           locked: saving || dragId !== null,
-          onOpen: (event) => openList(list.id, event.currentTarget),
+          onOpen: (event) => openCard(listSlotKey(list.id), event.currentTarget),
         })}
       </div>)}
-      {notes.map((note) => <div key={`note-${note.id}`} ref={(node) => { if (node) slots.current.set(noteSlotKey(note.id), node); else slots.current.delete(noteSlotKey(note.id)); }} className="list-grid__note-slot" tabIndex={-1}>
-        {renderNote?.(note)}
+      {notes.map((note) => <div key={`note-${note.id}`} ref={(node) => { if (node) slots.current.set(noteSlotKey(note.id), node); else slots.current.delete(noteSlotKey(note.id)); }} className={`list-grid__slot list-grid__note-slot${dragId === noteSlotKey(note.id) ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
+        if (focusedId !== null || event.target.closest('.task-list-card__meta-tags, [role="dialog"], [role="alertdialog"], button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
+        openCard(noteSlotKey(note.id), event.currentTarget);
+      }}>
+        {renderNote?.(note, { onPointerDown: (event) => startDrag(event, note, 'note'), disabled: saving || focusedId !== null, locked: saving || dragId !== null, onOpen: (event) => openCard(noteSlotKey(note.id), event.currentTarget) })}
       </div>)}
     </div>
-    {focusedList && createPortal(<div ref={overlayRef} className="workspace-shell list-focus-overlay" data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`Список «${focusedList.name}»`}>
-      <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр списка" onClick={() => setFocusedId(null)} />
-      {previousList && <div key={`previous-${previousList.id}`} className="list-focus-overlay__peek is-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(previousList)}</div></div>}
-      {nextList && <div key={`next-${nextList.id}`} className="list-focus-overlay__peek is-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{children(nextList)}</div></div>}
-      {followingNext && <div className="list-focus-overlay__peek is-following-next" aria-hidden="true"><div className="list-focus-overlay__peek-card"><article className="task-list-card" data-theme={followingNext.theme}><header className="task-list-card__header" /><div className="task-list-card__intro"><h2>{followingNext.name}</h2></div></article></div></div>}
-      {followingPrevious && <div className="list-focus-overlay__peek is-following-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card"><article className="task-list-card" data-theme={followingPrevious.theme}><header className="task-list-card__header" /><div className="task-list-card__intro"><h2>{followingPrevious.name}</h2></div></article></div></div>}
-      {leavingList && leavingList.id !== focusedId && <div className={`list-focus-overlay__dialog is-leaving-${slide.direction > 0 ? 'next' : 'previous'}`} aria-hidden="true" inert>{children(leavingList)}</div>}
+    {focusedCard && createPortal(<div ref={overlayRef} className="workspace-shell list-focus-overlay" data-theme={gridRef.current?.closest('.workspace-shell')?.dataset.theme || 'light'} role="dialog" aria-modal="true" aria-label={`${focusedCard.cardType === 'note' ? 'Заметка' : 'Список'} «${focusedCard.title || focusedCard.name}»`}>
+      <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр" onClick={() => setFocusedId(null)} />
+      {previousCard && <div key={`previous-${previousCard.cardKey}`} className="list-focus-overlay__peek is-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(previousCard)}</div></div>}
+      {nextCard && <div key={`next-${nextCard.cardKey}`} className="list-focus-overlay__peek is-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(nextCard)}</div></div>}
+      {followingNext && <div className="list-focus-overlay__peek is-following-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(followingNext)}</div></div>}
+      {followingPrevious && <div className="list-focus-overlay__peek is-following-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(followingPrevious)}</div></div>}
+      {leavingCard && leavingCard.cardKey !== focusedId && <div className={`list-focus-overlay__dialog is-leaving-${slide.direction > 0 ? 'next' : 'previous'}`} aria-hidden="true" inert>{renderWorkspaceCard(leavingCard, undefined, true)}</div>}
       <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1}>
-      {children(focusedList, undefined, true)}
-        <button ref={closeButton} className="list-focus-overlay__close" type="button" aria-label="Закрыть список" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        {renderWorkspaceCard(focusedCard, undefined, true)}
+        <button ref={closeButton} className="list-focus-overlay__close" type="button" aria-label="Закрыть" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>
-      <button ref={mobileCloseButton} className="list-focus-overlay__close-mobile" type="button" aria-label="Закрыть список" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
-      {lists.length > 1 && <nav className="list-focus-overlay__navigation" aria-label="Переключение между списками">
-        <button type="button" aria-label={`Предыдущий список: ${previousList.name}`} title="Предыдущий список (⌘/Ctrl + ←)" onClick={() => focusAdjacentList(-1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
-        <button type="button" aria-label={`Следующий список: ${nextList.name}`} title="Следующий список (⌘/Ctrl + →)" onClick={() => focusAdjacentList(1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+      <button ref={mobileCloseButton} className="list-focus-overlay__close-mobile" type="button" aria-label="Закрыть карточку" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      {orderedCards.length > 1 && <nav className="list-focus-overlay__navigation" aria-label="Переключение между карточками">
+        <button type="button" aria-label={`Предыдущая карточка: ${previousCard.title || previousCard.name}`} title="Предыдущая карточка (⌘/Ctrl + ←)" onClick={() => focusAdjacentCard(-1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+        <button type="button" aria-label={`Следующая карточка: ${nextCard.title || nextCard.name}`} title="Следующая карточка (⌘/Ctrl + →)" onClick={() => focusAdjacentCard(1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
       </nav>}
     </div>, document.body)}
   </>;
