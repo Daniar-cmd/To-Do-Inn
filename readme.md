@@ -7,17 +7,17 @@
 | Область | Технологии |
 | --- | --- |
 | Разметка и стили | HTML5, SCSS (Sass) |
-| Интерфейс | React 19, JSX, Fetch API |
+| Интерфейс | React 19, TypeScript/TSX, Fetch API |
 | Frontend-сборка | Vite 6 |
 | Обработка стилей | Gulp 5, Dart Sass |
-| Локальная frontend-среда | Node.js 20.19+, npm |
+| Локальная frontend-среда | Node.ts 20.19+, npm |
 | Backend | PHP 8.5, Laravel 13, Eloquent / Query Builder, JSON HTTP API |
 | PHP-зависимости | Composer 2 |
 | Backend-тесты | PHPUnit 12, отдельная PostgreSQL БД |
 | База данных | PostgreSQL |
 | Production-сервер | Debian 13, Caddy, PHP-FPM, HTTPS |
 
-Production-сборка frontend создаётся локально в `dist/`. Node.js, npm, Vite и Gulp на production-сервере не требуются. PHP обслуживает API, PostgreSQL — хранение данных.
+Production-сборка frontend создаётся локально в `dist/`. Node.ts, npm, Vite и Gulp на production-сервере не требуются. PHP обслуживает API, PostgreSQL — хранение данных.
 
 ## Библиотека дизайна
 
@@ -25,10 +25,10 @@ Production-сборка frontend создаётся локально в `dist/`.
 
 ## Локальный запуск
 
-1. Установите PHP 8.5 с `pdo_pgsql`, `mbstring`, `fileinfo`, Composer 2, PostgreSQL и Node.js 20.19+.
+1. Установите PHP 8.5 с `pdo_pgsql`, `mbstring`, `fileinfo`, Composer 2, PostgreSQL и Node.ts 20.19+.
 2. Установите PHP-зависимости: `composer install` (или `php composer.phar install`).
 3. Настройте **`.env.laravel`**, отдельную локальную БД `todo_inn_laravel_dev` и схему по разделу ниже. В текущей рабочей копии они уже подготовлены. Не перезаписывайте `.env`, `.env.laravel` и существующие базы. `database/schema.sql` — исторический data-changing скрипт, он не используется для запуска Laravel.
-4. Перед установкой frontend-зависимостей проверьте `node -v`: требуется Node.js 20.19+. На этом Mac старый `/usr/local/bin/node` (20.17) идёт первым в `PATH`; уже установленный `/opt/homebrew/bin/node` подходит. В текущем терминале выберите его **до** `npm ci`:
+4. Перед установкой frontend-зависимостей проверьте `node -v`: требуется Node.ts 20.19+. На этом Mac старый `/usr/local/bin/node` (20.17) идёт первым в `PATH`; уже установленный `/opt/homebrew/bin/node` подходит. В текущем терминале выберите его **до** `npm ci`:
 
    ```sh
    export PATH="/opt/homebrew/bin:$PATH"
@@ -56,6 +56,8 @@ Production-сборка frontend создаётся локально в `dist/`.
     Для новых терминалов повторите `export PATH="/opt/homebrew/bin:$PATH"` перед `npm run dev`, `npm run dev:styles` или тестами; настройки системного окружения эта инструкция не меняет.
 
 Для разработки SCSS используйте `npm run dev:styles` в третьем терминале. Gulp пишет скомпилированный CSS в `frontend/css/`; `npm run build` затем собирает HTML/React/CSS в `dist/`. На текущем production Caddy отдаёт страницы из `dist/`, а `/api/*` направляет в Laravel через `public/index.php`. Сборка не перезаписывает `public/`. Границы каталогов описаны в [architecture.md](docs/architecture.md).
+
+Frontend, конфигурации Vite/Gulp и frontend-тесты переведены на TypeScript: компоненты используют `.tsx`, модули и конфигурации — `.ts`, тесты Node — `.mts`. `npm run typecheck` проверяет приложение, конфигурации и frontend-тесты в строгом режиме (`strict: true`); `npm run test:frontend` запускает тесты через `tsx`. HTML-адреса и API не менялись.
 
 ## Авторизация
 
@@ -85,7 +87,7 @@ php artisan workspace:diagnose
 
 ## Переход на Laravel
 
-**Локальное приложение переключено на Laravel.** React/Vite использует авторизацию, профиль и workspace Laravel на порту 8001. Сохранены URL страниц и JSON-контракты. При первом переходе войдите заново: native PHP-сессии не переносятся. В `frontend/js/api.js` параллельные начальные чтения сессии объединены в один запрос, чтобы cookie и CSRF принадлежали одной сессии; завершённые ответы не кешируются.
+**Локальное приложение переключено на Laravel.** React/Vite использует авторизацию, профиль и workspace Laravel на порту 8001. Сохранены URL страниц и JSON-контракты. При первом переходе войдите заново: native PHP-сессии не переносятся. В `frontend/js/api.ts` параллельные начальные чтения сессии объединены в один запрос, чтобы cookie и CSRF принадлежали одной сессии; завершённые ответы не кешируются.
 
 **Локально выбрана отдельная `todo_inn_laravel_dev`, а не исходная legacy-БД.** Более поздние изменения из legacy автоматически не копировались. Исходная БД, `.env` и standalone `public/api/*.php` сохранены. На production Laravel обслуживает API отдельно от локальных БД.
 
@@ -95,7 +97,7 @@ php artisan workspace:diagnose
 
 ### Структура
 
-- `frontend/` — исходные HTML-страницы, React (`frontend/js/`) и SCSS (`frontend/scss/`); генерируемый `frontend/css/` игнорируется Git. `vite.config.mjs` сохраняет прежние URL страниц.
+- `frontend/` — исходные HTML-страницы, React (`frontend/js/`) и SCSS (`frontend/scss/`); генерируемый `frontend/css/` игнорируется Git. `vite.config.ts` сохраняет прежние URL страниц.
 - `public/` — PHP web-root с `index.php`, `favicon.svg`, сохранёнными `api/*.php` и legacy `css/style.css`; Gulp не меняет эти файлы.
 - Подробная схема запросов, сборки и окружений — в [architecture.md](docs/architecture.md).
 - `app/Models/` — `User`, `Board`, `TaskList`, `UserFlag`, `Task`, связи и типы полей существующей БД.
@@ -281,7 +283,7 @@ npm run test:frontend
 
 Проверен реальный React-интерфейс в Chromium через Vite → Laravel на изолированной тестовой БД: регистрация, переход в workspace, доска/список/задача, переименование/выполнение задачи, поиск, сохранение профиля/логина/пароля, выход, вход с новым паролем, сохранность задач после перезагрузки и удаление доски. Браузерный инструмент устанавливался отдельно во временный каталог, без зависимостей в проекте. Автоматические frontend-тесты фиксируют обнаруженную гонку начальной cookie/CSRF-сессии.
 
-Для осознанного **локального** отката остановите Laravel и перенастройте proxy **`/api` и `/favicon.svg`** в `vite.config.mjs` на `http://127.0.0.1:8000`. Запустите старый `php -S 127.0.0.1:8000 -t public` и перезапустите Vite. Через Vite страницы из `frontend/` доступны по прежним URL, legacy API работает с отдельной исходной БД и требует повторного входа. Если необходимо обслуживать HTML напрямую с порта 8000, сначала вручную разместите собранные страницы и assets из `dist/` в `public/`, **не удаляя** `public/index.php`, `public/api/`, `public/css/style.css` и `public/favicon.svg`. Это не автоматический откат и не синхронизация данных: новые записи Laravel в legacy-БД не появятся. Не восстанавливайте базы поверх друг друга; перенос данных требует отдельного плана.
+Для осознанного **локального** отката остановите Laravel и перенастройте proxy **`/api` и `/favicon.svg`** в `vite.config.ts` на `http://127.0.0.1:8000`. Запустите старый `php -S 127.0.0.1:8000 -t public` и перезапустите Vite. Через Vite страницы из `frontend/` доступны по прежним URL, legacy API работает с отдельной исходной БД и требует повторного входа. Если необходимо обслуживать HTML напрямую с порта 8000, сначала вручную разместите собранные страницы и assets из `dist/` в `public/`, **не удаляя** `public/index.php`, `public/api/`, `public/css/style.css` и `public/favicon.svg`. Это не автоматический откат и не синхронизация данных: новые записи Laravel в legacy-БД не появятся. Не восстанавливайте базы поверх друг друга; перенос данных требует отдельного плана.
 
 ### Production — текущая схема
 

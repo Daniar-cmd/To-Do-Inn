@@ -1,0 +1,857 @@
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { adjacentWorkspaceCards, cardBounds, findGridTarget, masonrySlots, moveWorkspaceCardToSlot, verticalSwipe, workspaceCards } from './listGrid.ts';
+import type { List, Note } from './types.ts';
+
+type Bounds = { left: number; top: number; width: number; height: number };
+type Cell = { key: string; is_pinned: boolean; left: number; top: number; right: number; bottom: number };
+type WorkspaceCard = ((List & { cardType: 'list' }) | (Note & { cardType: 'note' })) & { cardKey: string; title?: string; name?: string };
+type DragGesture = {
+  id: number; key: string; kind: 'list' | 'note'; pointerId: number; active: boolean;
+  target: string | null; startX: number; startY: number; x: number; y: number;
+  offsetX: number; offsetY: number; cells: Cell[]; frame: number | null;
+  hitBounds: Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom'> | null; minHeight: string;
+};
+type TaskGesture = {
+  source: HTMLLIElement; sourceListId?: string; boardId?: string; taskId?: string;
+  handle: HTMLElement; originalNextTaskId: string | null; startX: number; startY: number;
+  offsetX: number; offsetY: number; pointerId: number; placeholder: HTMLLIElement;
+  preview: HTMLLIElement | null; started?: boolean;
+  onMoveTask: (taskId: number, listId: number, beforeId: number | null) => Promise<void>;
+};
+type SwipeStart = { x: number; y: number; scrollTop: number; fromPreview: boolean; previewDirection: number; scrolled: boolean; direction: number; metrics?: { distance: number; enterY: number; enterHeight: number; outgoingY: number } | null };
+type DragHandle = { onPointerDown: (event: React.PointerEvent<HTMLElement>) => void; disabled: boolean; locked: boolean; onOpen: (event: React.MouseEvent<HTMLElement>) => void };
+type Slide = { fromKey: string | null; direction: number; settled?: boolean };
+
+const motionOptions: KeyframeAnimationOptions = { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'both' };
+const carouselDuration = 440;
+const listSlotKey = (id: number) => `list:${id}`;
+const noteSlotKey = (id: number) => `note:${id}`;
+
+export function ListGrid({ lists, notes = [], renderNote, onSwap, onMoveTask, children }: {
+  lists: List[]; notes?: Note[];
+  renderNote?: (note: Note, dragHandle?: DragHandle, isFullscreen?: boolean) => React.ReactNode;
+  children: (list: List, dragHandle?: DragHandle, isFullscreen?: boolean) => React.ReactNode;
+  onSwap: (sourceId: number, targetId: number, sourceType: 'list' | 'note', targetType: 'list' | 'note') => Promise<void>;
+  onMoveTask: (taskId: number, listId: number, beforeId: number | null) => Promise<void>;
+}) {
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const slots = useRef(new Map<string, HTMLDivElement>());
+  const gesture = useRef<DragGesture | null>(null);
+  const taskGesture = useRef<TaskGesture | null>(null);
+  const onMoveTaskRef = useRef(onMoveTask);
+  onMoveTaskRef.current = onMoveTask;
+  const stopGesture = useRef<((commit: boolean, notify?: boolean) => Promise<void>) | null>(null);
+  const lastPositions = useRef(new Map<string, Bounds>());
+  const releasePositions = useRef<Map<string, Bounds> | null>(null);
+  const layoutWidth = useRef<number | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [slide, setSlide] = useState<Slide | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [announcement, setAnnouncement] = useState('');
+  const [error, setError] = useState('');
+  const closeButton = useRef<HTMLButtonElement | null>(null);
+  const mobileCloseButton = useRef<HTMLButtonElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const slideTimer = useRef<number | undefined>(undefined);
+  const swipeResetTimer = useRef<number | undefined>(undefined);
+  const touchStart = useRef<SwipeStart | null>(null);
+  const mobileSliding = useRef(false);
+  const focusReturn = useRef<HTMLElement | null>(null);
+  const focusScrollTop = useRef(0);
+  const focusedIdRef = useRef(focusedId);
+  focusedIdRef.current = focusedId;
+  const orderedCards = workspaceCards(lists, notes) as WorkspaceCard[];
+  const cardsRef = useRef(orderedCards);
+  cardsRef.current = orderedCards;
+  const orderKey = orderedCards.map((item) => item.cardKey).join(',');
+  const focusedIndex = orderedCards.findIndex((card) => card.cardKey === focusedId);
+  const focusedCard = orderedCards[focusedIndex];
+  const isFocusOpen = focusedId !== null;
+  const { previous: previousCard, next: nextCard } = adjacentWorkspaceCards(orderedCards, focusedId ?? '');
+  const followingNext = nextCard && adjacentWorkspaceCards(orderedCards, nextCard.cardKey).next;
+  const followingPrevious = previousCard && adjacentWorkspaceCards(orderedCards, previousCard.cardKey).previous;
+  const leavingCard = slide && !slide.settled && orderedCards.find((card) => card.cardKey === slide.fromKey);
+
+  function renderWorkspaceCard(card: WorkspaceCard | null | undefined, dragHandle?: DragHandle, isFullscreen = false) {
+    if (!card) return null;
+    return card.cardType === 'note'
+      ? renderNote?.(card, dragHandle, isFullscreen)
+      : children(card, dragHandle, isFullscreen);
+  }
+
+  function cardFor(id: string): HTMLElement | null {
+    return slots.current.get(id)?.querySelector<HTMLElement>(':scope > .task-list-card, :scope > .workspace-note-card') ?? null;
+  }
+
+  function capturePositions() {
+    const positions = new Map<string, Bounds>();
+    for (const id of slots.current.keys()) {
+      const bounds = cardBounds(cardFor(id), window.scrollX, window.scrollY);
+      if (bounds) positions.set(id, bounds);
+    }
+    return positions;
+  }
+
+  function stopAnimation(card: HTMLElement | null | undefined) {
+    card?.getAnimations().forEach((animation) => animation.cancel());
+  }
+
+  function fitMasonrySlots(cards = orderedCards) {
+    const grid = gridRef.current;
+    if (!grid) return;
+    // Old explicit column positions can create implicit tracks after narrowing
+    // the viewport. Remove them before reading the new CSS column count.
+    for (const slot of slots.current.values()) {
+      slot.style.removeProperty('grid-column-start');
+      slot.style.removeProperty('grid-row-start');
+    }
+    const styles = window.getComputedStyle(grid);
+    const rowHeight = Number.parseFloat(styles.gridAutoRows) || 8;
+    const rowGap = Number.parseFloat(styles.rowGap) || 18;
+    const cardGap = Number.parseFloat(styles.getPropertyValue('--list-card-gap')) || 18;
+    const columns = styles.gridTemplateColumns.trim().split(/\s+/).length;
+    layoutWidth.current = grid!.clientWidth;
+    // Transforms belong to the animation, not to the layout's actual card height.
+    const layoutItems = cards.map((item) => ({ key: item.cardKey }));
+    const positions = masonrySlots(layoutItems.map((item) => cardFor(item.key)?.offsetHeight || 0), columns, rowHeight, rowGap, cardGap);
+    for (const [index, item] of layoutItems.entries()) {
+      const slot = slots.current.get(item.key);
+      if (!slot) continue;
+      const { column, row, span } = positions[index];
+      const columnValue = String(column);
+      const rowValue = String(row);
+      const spanValue = `span ${span}`;
+      if (slot.style.gridColumnStart !== columnValue) slot.style.gridColumnStart = columnValue;
+      if (slot.style.gridRowStart !== rowValue) slot.style.gridRowStart = rowValue;
+      if (slot.style.gridRowEnd !== spanValue) slot.style.gridRowEnd = spanValue;
+    }
+  }
+
+  function animateLayout(previous: Map<string, Bounds>, draggedId: string | null = null) {
+    const next = new Map<string, Bounds>();
+    for (const id of slots.current.keys()) {
+      if (draggedId !== null && id === draggedId) continue;
+      const card = cardFor(id);
+      if (!card) continue;
+      stopAnimation(card);
+      card.style.removeProperty('transform');
+      const slot = slots.current.get(id);
+      const bounds = cardBounds(card, window.scrollX, window.scrollY);
+      if (!slot || !bounds) continue;
+      delete slot.dataset.previewMoving;
+      const before = previous.get(id);
+      next.set(id, bounds);
+      if (!before || !card.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
+      const dx = before.left - bounds.left;
+      const dy = before.top - bounds.top;
+      // Only move cards: scaling live text and controls causes repaint artifacts in WebKit.
+      if (Math.abs(dx) + Math.abs(dy) > 1) {
+        const frames = [{ transform: `translate(${dx}px, ${dy}px)` }];
+        if (draggedId !== null) {
+          slot.dataset.previewMoving = 'true';
+        }
+        frames.push({ transform: 'translate(0, 0)' });
+        const animation = card.animate(frames, { ...motionOptions, duration: draggedId === null ? 300 : 380 });
+        animation.onfinish = () => {
+          delete slot.dataset.previewMoving;
+          // Do not retain an identity transform/containing block after the animation.
+          animation.cancel();
+        };
+      }
+    }
+    return next;
+  }
+
+  useLayoutEffect(() => {
+    if (gesture.current?.active || focusedId !== null) return;
+    fitMasonrySlots();
+    lastPositions.current = animateLayout(releasePositions.current || lastPositions.current);
+    releasePositions.current = null;
+  }, [orderKey, dragId, focusedId]);
+
+  useEffect(() => {
+    if (focusedId !== null && !orderedCards.some((card) => card.cardKey === focusedId)) setFocusedId(null);
+  }, [orderKey, focusedId]);
+
+  useLayoutEffect(() => {
+    if (!isFocusOpen || !window.matchMedia('(max-width: 700px)').matches) return undefined;
+    const body = document.body;
+    const previous = {
+      overflow: body.style.overflow,
+      position: body.style.position,
+      top: body.style.top,
+      left: body.style.left,
+      right: body.style.right,
+      width: body.style.width,
+    };
+    const scrollTop = focusScrollTop.current;
+    // Fix the document itself; overflow:hidden alone does not reliably lock iOS Safari.
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollTop}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+    return () => {
+      body.style.overflow = previous.overflow;
+      body.style.position = previous.position;
+      body.style.top = previous.top;
+      body.style.left = previous.left;
+      body.style.right = previous.right;
+      body.style.width = previous.width;
+      window.scrollTo(0, scrollTop);
+    };
+  }, [isFocusOpen]);
+
+  useEffect(() => {
+    if (!isFocusOpen || !window.matchMedia('(max-width: 700px)').matches || !window.visualViewport) return undefined;
+    const viewport = window.visualViewport;
+    const overlay = overlayRef.current;
+    const updateViewport = () => {
+      overlay?.style.setProperty('--focus-viewport-height', `${viewport.height}px`);
+      overlay?.style.setProperty('--focus-viewport-top', `${viewport.offsetTop}px`);
+    };
+    updateViewport();
+    viewport.addEventListener('resize', updateViewport);
+    viewport.addEventListener('scroll', updateViewport);
+    return () => {
+      viewport.removeEventListener('resize', updateViewport);
+      viewport.removeEventListener('scroll', updateViewport);
+    };
+  }, [isFocusOpen]);
+
+  useEffect(() => () => {
+    window.clearTimeout(slideTimer.current);
+    window.clearTimeout(swipeResetTimer.current);
+  }, []);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return undefined;
+
+    function animateRows(list: Element, before: Map<Element, DOMRect>) {
+      for (const row of list.querySelectorAll(':scope > li[data-task-id]')) {
+        const previous = before.get(row);
+        if (!previous || !row.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
+        const current = row.getBoundingClientRect();
+        const dx = previous.left - current.left;
+        const dy = previous.top - current.top;
+        if (Math.abs(dx) + Math.abs(dy) < 1) continue;
+        row.getAnimations().forEach((animation) => animation.cancel());
+        const animation = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], { ...motionOptions, duration: 240 });
+        animation.onfinish = () => animation.cancel();
+      }
+    }
+
+    function captureRows() {
+      return new Map([...grid!.querySelectorAll<HTMLElement>('.task-list-card__tasks:not(.is-completed) > li[data-task-id]')]
+        .map((row) => [row, row.getBoundingClientRect()]));
+    }
+
+    function placePlaceholder(ul: Element, point: PointerEvent) {
+      const active = taskGesture.current;
+      if (!active || active.placeholder.parentElement === null) return;
+      const before = captureRows();
+      const rows = [...ul.querySelectorAll(':scope > li[data-task-id]:not(.is-task-drag-source)')];
+      const target = rows.find((row) => point.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
+      if (target) ul.insertBefore(active.placeholder, target);
+      else ul.append(active.placeholder);
+      for (const candidate of grid!.querySelectorAll<HTMLElement>('.task-list-card__tasks:not(.is-completed)')) {
+        candidate.classList.toggle('is-task-drop-zone', candidate === ul);
+      }
+      animateRows(ul, before);
+      for (const row of grid!.querySelectorAll<HTMLElement>('.task-list-card__tasks:not(.is-completed) > li[data-task-id]')) {
+        const previous = before.get(row);
+        if (!previous || row.closest('ul') === ul || !row.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
+        const current = row.getBoundingClientRect();
+        const dx = previous.left - current.left;
+        const dy = previous.top - current.top;
+        if (Math.abs(dx) + Math.abs(dy) > 1) {
+          row.getAnimations().forEach((animation) => animation.cancel());
+          const animation = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], { ...motionOptions, duration: 240 });
+          animation.onfinish = () => animation.cancel();
+        }
+      }
+    }
+
+    function cleanGesture({ keepPosition = false } = {}) {
+      const active = taskGesture.current;
+      if (!active) return;
+      taskGesture.current = null;
+      window.removeEventListener('pointermove', moveTask);
+      window.removeEventListener('pointerup', finishTask);
+      window.removeEventListener('pointercancel', cancelTask);
+      active.preview?.remove();
+      if (active.started) window.setTimeout(() => { delete active.handle.dataset.dragged; }, 0);
+      if (keepPosition && active.placeholder.isConnected) {
+        active.placeholder.replaceWith(active.source);
+      } else {
+        active.placeholder.remove();
+        active.source.classList.remove('is-task-drag-source');
+      }
+      grid!.querySelectorAll<HTMLElement>('.is-task-drop-zone').forEach((node) => node.classList.remove('is-task-drop-zone'));
+    }
+
+    function moveTask(event: PointerEvent) {
+      const active = taskGesture.current;
+      if (!active || event.pointerId !== active.pointerId) return;
+      const dx = event.clientX - active.startX;
+      const dy = event.clientY - active.startY;
+      if (!active.started && Math.hypot(dx, dy) < 6) return;
+      event.preventDefault();
+      if (!active.started) {
+        active.started = true;
+        active.handle.dataset.dragged = 'true';
+        const bounds = active.source.getBoundingClientRect();
+        active.placeholder.style.height = `${bounds.height}px`;
+        active.source.parentElement!.insertBefore(active.placeholder, active.source);
+        active.source.classList.add('is-task-drag-source');
+        active.preview = active.source.cloneNode(true) as HTMLLIElement;
+        active.preview.removeAttribute('data-task-id');
+        active.preview.classList.add('task-drag-preview');
+        const card = active.source.closest('.task-list-card');
+        active.preview.style.setProperty('--card-accent', window.getComputedStyle(card!).getPropertyValue('--card-accent'));
+        Object.assign(active.preview.style, {
+          position: 'fixed', left: `${bounds.left}px`, top: `${bounds.top}px`, width: `${bounds.width}px`,
+          height: `${bounds.height}px`, margin: '0', zIndex: '2000', pointerEvents: 'none',
+        });
+        (grid!.closest('.workspace-shell') || document.body).append(active.preview);
+        active.preview.classList.add('is-lifting');
+      }
+      active.preview!.style.left = `${event.clientX - active.offsetX}px`;
+      active.preview!.style.top = `${event.clientY - active.offsetY}px`;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.task-list-card__tasks:not(.is-completed)');
+      if (target && grid!.contains(target) && (target as HTMLElement).dataset.boardId === active.boardId) placePlaceholder(target, event);
+    }
+
+    async function finishTask(event: PointerEvent) {
+      const active = taskGesture.current;
+      if (!active || event.pointerId !== active.pointerId) return;
+      if (!active.started) {
+        taskGesture.current = null;
+        window.removeEventListener('pointermove', moveTask);
+        window.removeEventListener('pointerup', finishTask);
+        window.removeEventListener('pointercancel', cancelTask);
+        return;
+      }
+      const targetListId = (active.placeholder.parentElement as HTMLElement | null)?.dataset.listId;
+      if (!targetListId) {
+        cleanGesture({ keepPosition: true });
+        return;
+      }
+      const nextRow = (() => {
+        let node = active.placeholder.nextElementSibling;
+        while (node && !node.matches('li[data-task-id]')) node = node.nextElementSibling;
+        return node;
+      })();
+      const targetTaskId = (nextRow as HTMLElement | null)?.dataset.taskId || null;
+      const destination = active.placeholder.getBoundingClientRect();
+      const animationsAllowed = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (animationsAllowed) {
+        active.preview!.animate([
+          { transform: 'translateY(-2px) scale(1.025)' },
+          { transform: `translate(${destination.left - active.preview!.getBoundingClientRect().left}px, ${destination.top - active.preview!.getBoundingClientRect().top}px) scale(.96)` },
+        ], { duration: 210, easing: 'cubic-bezier(.68, 0, .84, 0)', fill: 'forwards' });
+      }
+      taskGesture.current = null;
+      window.removeEventListener('pointermove', moveTask);
+      window.removeEventListener('pointerup', finishTask);
+      window.removeEventListener('pointercancel', cancelTask);
+      grid!.querySelectorAll<HTMLElement>('.is-task-drop-zone').forEach((node) => node.classList.remove('is-task-drop-zone'));
+      window.setTimeout(() => active.preview?.remove(), animationsAllowed ? 215 : 0);
+      window.setTimeout(() => { delete active.handle.dataset.dragged; }, 0);
+      const moved = String(targetListId) !== active.sourceListId || targetTaskId !== active.originalNextTaskId;
+      if (!moved) {
+        active.placeholder.replaceWith(active.source);
+        active.source.classList.remove('is-task-drag-source');
+        return;
+      }
+      try {
+        await active.onMoveTask(Number(active.taskId), Number(targetListId), targetTaskId ? Number(targetTaskId) : null);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      } finally {
+        const beforeCleanup = captureRows();
+        active.placeholder.remove();
+        active.source.classList.remove('is-task-drag-source');
+        for (const ul of grid!.querySelectorAll<HTMLElement>('.task-list-card__tasks:not(.is-completed)')) animateRows(ul, beforeCleanup);
+      }
+    }
+
+    function cancelTask(event: PointerEvent) {
+      const active = taskGesture.current;
+      if (!active || (event.pointerId !== undefined && event.pointerId !== active.pointerId)) return;
+      cleanGesture({ keepPosition: true });
+    }
+
+    function startTask(event: PointerEvent) {
+      if (event.button !== 0 || !event.isPrimary || savingRef.current || focusedIdRef.current !== null || gesture.current?.active) return;
+      const handle = (event.target as Element).closest<HTMLElement>('.task-list-card__task-menu');
+      const source = handle?.closest<HTMLLIElement>('li[data-task-id]');
+      const ul = source?.closest<HTMLElement>('.task-list-card__tasks:not(.is-completed)');
+      if (!source || !ul || !grid!.contains(ul)) return;
+      const bounds = source.getBoundingClientRect();
+      let nextRow = source.nextElementSibling;
+      while (nextRow && !nextRow.matches('li[data-task-id]')) nextRow = nextRow.nextElementSibling;
+      taskGesture.current = {
+        source, sourceListId: ul.dataset.listId, boardId: ul.dataset.boardId, taskId: source.dataset.taskId,
+        handle: handle!,
+        originalNextTaskId: (nextRow as HTMLElement | null)?.dataset.taskId || null, startX: event.clientX, startY: event.clientY,
+        offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top, pointerId: event.pointerId,
+        placeholder: document.createElement('li'), preview: null,
+        onMoveTask: (...args) => onMoveTaskRef.current(...args),
+      };
+      taskGesture.current!.placeholder.className = 'task-drag-placeholder';
+      taskGesture.current!.placeholder.setAttribute('aria-hidden', 'true');
+      window.addEventListener('pointermove', moveTask, { passive: false });
+      window.addEventListener('pointerup', finishTask);
+      window.addEventListener('pointercancel', cancelTask);
+    }
+
+    grid!.addEventListener('pointerdown', startTask);
+    return () => {
+      grid!.removeEventListener('pointerdown', startTask);
+      if (taskGesture.current) cleanGesture({ keepPosition: true });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isFocusOpen) return;
+    window.clearTimeout(slideTimer.current);
+    window.clearTimeout(swipeResetTimer.current);
+    mobileSliding.current = false;
+    touchStart.current = null;
+  }, [isFocusOpen]);
+
+  useLayoutEffect(() => {
+    if (!mobileSliding.current || !overlayRef.current) return;
+    mobileSliding.current = false;
+    const overlay = overlayRef.current;
+    delete overlay.dataset.swipe;
+    delete overlay.dataset.swipeSettling;
+    delete overlay!.dataset.swipeCommit;
+    overlay.style.removeProperty('--focus-progress');
+    overlay.style.removeProperty('--focus-enter-y');
+    overlay.style.removeProperty('--focus-enter-height');
+    overlay.style.removeProperty('--focus-outgoing-y');
+  }, [focusedId]);
+
+  useEffect(() => {
+    if (focusedId === null) return undefined;
+    const shell = gridRef.current?.closest<HTMLElement>('.workspace-shell');
+    const previouslyInert = shell?.inert ?? false;
+    if (shell) shell.inert = true;
+    const initialFocus = window.matchMedia('(max-width: 700px)').matches ? mobileCloseButton.current : closeButton.current;
+    (initialFocus || dialogRef.current)?.focus({ preventScroll: true });
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || (event.target as Element).closest?.('.list-delete-dialog')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setFocusedId(null);
+        return;
+      }
+      const isTextEntry = (event.target as Element).closest?.('input, textarea, select, [contenteditable="true"]');
+      if (!isTextEntry && (event.metaKey || event.ctrlKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && cardsRef.current.length > 1) {
+        event.preventDefault();
+        focusAdjacentCard(event.key === 'ArrowRight' ? 1 : -1);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const dialog = overlayRef.current;
+      const focusable = [...(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') || [])]
+        .filter((item) => item.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        (closeButton.current || dialogRef.current)?.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (shell) shell.inert = previouslyInert;
+      // Keep the return target while switching between neighboring lists.
+      if (focusedIdRef.current === null) {
+        window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
+        if (focusReturn.current?.isConnected) focusReturn.current.focus({ preventScroll: true });
+        focusReturn.current = null;
+      }
+    };
+  }, [focusedId]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => {
+      if (focusedId !== null) return;
+      if (gesture.current?.active) {
+        if (Math.abs(gridRef.current!.clientWidth - (layoutWidth.current ?? 0)) > 1) stopGesture.current?.(false);
+        return;
+      }
+      fitMasonrySlots();
+      // Cell geometry stays independent of card animations and page scrolling.
+      lastPositions.current = new Map([...slots.current].map(([id, slot]) => {
+        const bounds = slot.getBoundingClientRect();
+        const card = cardFor(id);
+        return [id, { left: bounds.left + window.scrollX, top: bounds.top + window.scrollY,
+          width: card?.offsetWidth || bounds.width, height: card?.offsetHeight || bounds.height }];
+      }));
+    });
+    for (const id of slots.current.keys()) {
+      const card = cardFor(id);
+      if (card) observer.observe(card);
+    }
+    if (gridRef.current) observer.observe(gridRef.current);
+    return () => observer.disconnect();
+  }, [orderKey, focusedId]);
+
+  useEffect(() => () => { void stopGesture.current?.(false, false); }, []);
+
+  function startDrag(event: React.PointerEvent<HTMLElement>, item: List | Note, kind: 'list' | 'note' = 'list') {
+    const items = orderedCards;
+    const slotKey = kind === 'note' ? noteSlotKey : listSlotKey;
+    const sourceKey = slotKey(item.id);
+    if (event.button !== 0 || !event.isPrimary || item.is_pinned || savingRef.current || gesture.current || focusedId !== null) return;
+    const grid = gridRef.current;
+    const card = cardFor(slotKey(item.id));
+    if (!grid || !card) return;
+    const handle = event.currentTarget;
+    const initialBounds = card.getBoundingClientRect();
+    const current: DragGesture = {
+      id: item.id, key: sourceKey, kind, pointerId: event.pointerId, active: false, target: sourceKey,
+      startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY,
+      offsetX: event.clientX - initialBounds.left, offsetY: event.clientY - initialBounds.top,
+      cells: [], frame: null, hitBounds: null, minHeight: grid!.style.minHeight,
+    };
+    gesture.current = current;
+    handle.setPointerCapture(event.pointerId);
+
+    function updatePosition() {
+      if (!current.active) return;
+      const bounds = grid!.getBoundingClientRect();
+      const sourceSlot = slots.current.get(current.key);
+      if (!sourceSlot) { void finish(false); return; }
+      const cell = sourceSlot.getBoundingClientRect();
+      const left = Math.max(bounds.left, Math.min(current.x - current.offsetX, bounds.right - initialBounds.width));
+      const top = Math.max(bounds.top, Math.min(current.y - current.offsetY, Math.max(bounds.top, bounds.bottom - initialBounds.height)));
+      card!.style.transform = `translate(${left - cell.left}px, ${top - cell.top}px)`;
+
+      // Never let the tall source placeholder capture a lower target. Hit-test
+      // only the original cells, independently of the live preview geometry.
+      const target = findGridTarget(current.cells, current.hitBounds!, current.x + window.scrollX, current.y + window.scrollY);
+      if (target === current.target) return;
+      const reordered = target === null ? items : moveWorkspaceCardToSlot(items, current.key, String(target));
+      const previous = capturePositions();
+      // Preview the actual final masonry layout, not scaled cards in old cells.
+      fitMasonrySlots(reordered);
+      animateLayout(previous, current.key);
+      const destination = sourceSlot.getBoundingClientRect();
+      card!.style.transform = `translate(${left - destination.left}px, ${top - destination.top}px)`;
+      current.target = target === null ? null : String(target);
+    }
+
+    function tick() {
+      if (!current.active) return;
+      const gridBounds = grid!.getBoundingClientRect();
+      // Scroll only while the pointer remains over the grid horizontally.
+      if (current.x >= gridBounds.left && current.x <= gridBounds.right) {
+        const edge = 70;
+        const speed = current.y < edge ? -Math.min(14, (edge - current.y) / 4)
+          : current.y > window.innerHeight - edge ? Math.min(14, (current.y - window.innerHeight + edge) / 4) : 0;
+        if (speed) window.scrollBy(0, speed);
+      }
+      updatePosition();
+      if (gesture.current === current) current.frame = window.requestAnimationFrame(tick);
+    }
+
+    function move(pointer: PointerEvent) {
+      if (pointer.pointerId !== current.pointerId) return;
+      current.x = pointer.clientX;
+      current.y = pointer.clientY;
+      if (!current.active && Math.hypot(current.x - current.startX, current.y - current.startY) >= 6) {
+        const bounds = grid!.getBoundingClientRect();
+        current.hitBounds = { left: bounds.left + window.scrollX, right: bounds.right + window.scrollX,
+          top: bounds.top + window.scrollY, bottom: bounds.bottom + window.scrollY };
+        // Do not let a shorter preview collapse the page and move the pointer's target.
+        grid!.style.minHeight = `${bounds.height}px`;
+        current.cells = items.map((candidate) => {
+          const rect = slots.current.get(candidate.cardKey)!.getBoundingClientRect();
+          return { key: candidate.cardKey, is_pinned: candidate.is_pinned, left: rect.left + window.scrollX,
+            right: rect.right + window.scrollX, top: rect.top + window.scrollY, bottom: rect.bottom + window.scrollY };
+        });
+        lastPositions.current = capturePositions();
+        for (const id of slots.current.keys()) stopAnimation(cardFor(id));
+        current.active = true;
+        setError('');
+        setDragId(current.key);
+        document.body.classList.add('is-list-dragging');
+        setAnnouncement(`Перемещение ${kind === 'note' ? 'заметки' : 'списка'} «${'title' in item ? item.title : item.name}». Escape — отменить.`);
+        current.frame = window.requestAnimationFrame(tick);
+      }
+      if (current.active) pointer.preventDefault();
+    }
+
+    async function finish(commit: boolean, notify = true) {
+      if (gesture.current !== current) return;
+      if (current.frame !== null) window.cancelAnimationFrame(current.frame);
+      if (current.active && notify) releasePositions.current = capturePositions();
+      gesture.current = null;
+      stopGesture.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', keydown);
+      window.removeEventListener('blur', cancel);
+      window.removeEventListener('resize', cancel);
+      handle.removeEventListener('lostpointercapture', cancel);
+      if (handle.hasPointerCapture(current.pointerId)) handle.releasePointerCapture(current.pointerId);
+      document.body.classList.remove('is-list-dragging');
+      grid!.style.minHeight = current.minHeight;
+      for (const id of slots.current.keys()) {
+        stopAnimation(cardFor(id));
+        cardFor(id)?.style.removeProperty('transform');
+        const slot = slots.current.get(id);
+        if (slot) delete slot.dataset.previewMoving;
+      }
+      if (!notify || !current.active) return;
+      setDragId(null);
+      if (!commit || current.target === null || current.target === current.key) {
+        setAnnouncement('Перемещение отменено.');
+        return;
+      }
+      savingRef.current = true;
+      setSaving(true);
+      try {
+        const target = orderedCards.find((candidate) => candidate.cardKey === current.target);
+        if (!target) return;
+        await onSwap(current.id, target.id, kind, target.cardType);
+        setAnnouncement('Порядок карточек сохранён.');
+      } catch (err) {
+        setError((err as Error).message);
+        setAnnouncement('Не удалось сохранить порядок. Изменения отменены.');
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    }
+
+    function up(pointer: PointerEvent) {
+      if (pointer.pointerId !== current.pointerId) return;
+      current.x = pointer.clientX;
+      current.y = pointer.clientY;
+      updatePosition();
+      void finish(true);
+    }
+    function cancel() { void finish(false); }
+    function keydown(key: KeyboardEvent) {
+      if (key.key === 'Escape') { key.preventDefault(); void finish(false); }
+    }
+    stopGesture.current = finish;
+    handle.addEventListener('lostpointercapture', cancel);
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('keydown', keydown);
+    window.addEventListener('blur', cancel);
+    window.addEventListener('resize', cancel);
+  }
+
+  function focusAdjacentCard(direction: number) {
+    if (cardsRef.current.length < 2) return;
+    const adjacent = adjacentWorkspaceCards(cardsRef.current, focusedIdRef.current ?? '');
+    const nextKey = (direction > 0 ? adjacent.next : adjacent.previous)?.cardKey;
+    if (nextKey === undefined) return;
+    window.clearTimeout(slideTimer.current);
+    setSlide({ fromKey: focusedIdRef.current, direction });
+    setFocusedId(nextKey);
+    if (!window.matchMedia('(max-width: 700px)').matches) {
+      window.scrollTo({ top: focusScrollTop.current, behavior: 'instant' });
+    }
+    const duration = window.matchMedia('(max-width: 700px)').matches ? 220 : 340;
+    slideTimer.current = window.setTimeout(() => setSlide((current) => current && { ...current, settled: true }), duration);
+  }
+
+  function showSwipe(offset: number, direction: number, settling = false) {
+    const overlay = overlayRef.current;
+    const dialog = dialogRef.current;
+    const preview = overlay?.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-next' : '.list-focus-overlay__peek.is-previous');
+    if (!overlay || !dialog || !preview) return;
+    const metrics = touchStart.current?.metrics || (() => {
+      const active = dialog.getBoundingClientRect();
+      const neighbor = preview.getBoundingClientRect();
+      const outgoing = overlay.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-previous' : '.list-focus-overlay__peek.is-next');
+      return {
+        distance: Math.max(320, active.height * .85),
+        enterY: active.top - neighbor.top,
+        enterHeight: active.height - 88,
+        outgoingY: (outgoing?.getBoundingClientRect().top || active.top) - (overlay.getBoundingClientRect().top + overlay.clientHeight / 2 - 44),
+      };
+    })();
+    if (touchStart.current && !touchStart.current.metrics) touchStart.current.metrics = metrics;
+    const { distance } = metrics;
+    const progress = Math.min(1, Math.abs(offset) / distance);
+    overlay.dataset.swipe = direction > 0 ? 'next' : 'previous';
+    overlay.style.setProperty('--focus-enter-y', `${metrics.enterY}px`);
+    overlay.style.setProperty('--focus-enter-height', `${metrics.enterHeight}px`);
+    overlay.style.setProperty('--focus-outgoing-y', `${metrics.outgoingY}px`);
+    overlay.style.setProperty('--focus-progress', String(progress));
+    if (settling) overlay.dataset.swipeSettling = 'true';
+  }
+
+  function startSwipe(event: TouchEvent) {
+    touchStart.current = null;
+    if (mobileSliding.current || event.touches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) return;
+    if (dialogRef.current?.querySelector('.task-list-card__inline-composer.is-open')) return;
+    window.clearTimeout(swipeResetTimer.current);
+    if (overlayRef.current) delete overlayRef.current.dataset.swipeSettling;
+    const preview = (event.target as Element).closest?.('.list-focus-overlay__peek');
+    if (!preview && (event.target as Element).closest?.('button, input, textarea, select, summary, a, [draggable="true"], [role="alertdialog"]')) return;
+    const touch = event.touches[0];
+    touchStart.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      scrollTop: dialogRef.current?.scrollTop || 0,
+      fromPreview: Boolean(preview),
+      previewDirection: preview?.classList.contains('is-next') ? 1 : -1,
+      scrolled: false,
+      direction: 0,
+    };
+  }
+
+  function moveSwipe(event: TouchEvent) {
+    const start = touchStart.current;
+    if (!start || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const dy = touch.clientY - start.y;
+    const dx = touch.clientX - start.x;
+    if (Math.abs((dialogRef.current?.scrollTop || 0) - start.scrollTop) > 8) start.scrolled = true;
+    if (start.scrolled || Math.abs(dy) < 8 || Math.abs(dy) < Math.abs(dx) * 1.4) return;
+    const direction = dy < 0 ? 1 : -1;
+    if (start.fromPreview && direction !== start.previewDirection) return;
+    const dialog = dialogRef.current;
+    const canScroll = !start.fromPreview && dialog && (direction > 0
+      ? dialog.scrollTop < dialog.scrollHeight - dialog.clientHeight - 2
+      : dialog.scrollTop > 2);
+    if (canScroll || cardsRef.current.length < 2) return;
+    event.preventDefault();
+    if (start.direction && start.direction !== direction) start.metrics = null;
+    start.direction = direction;
+    showSwipe(dy, direction);
+  }
+
+  function endSwipe(event: TouchEvent) {
+    const start = touchStart.current;
+    if (!start) return;
+    if (event.changedTouches.length !== 1 || !window.matchMedia('(max-width: 700px)').matches) { touchStart.current = null; return; }
+    const touch = event.changedTouches[0];
+    const scrollDistance = start.fromPreview ? 0 : (dialogRef.current?.scrollTop || 0) - start.scrollTop;
+    const direction = verticalSwipe(start, { x: touch.clientX, y: touch.clientY }, scrollDistance, start.fromPreview ? 64 : 96);
+    const overlay = overlayRef.current;
+    const dialog = dialogRef.current;
+    const canScroll = !start.fromPreview && dialog && (direction > 0
+      ? dialog.scrollTop < dialog.scrollHeight - dialog.clientHeight - 2
+      : dialog.scrollTop > 2);
+    if (!start.scrolled && direction && (!start.direction || direction === start.direction) && !canScroll && (!start.fromPreview || direction === start.previewDirection)) {
+      const adjacent = adjacentWorkspaceCards(cardsRef.current, focusedIdRef.current ?? '');
+      const nextKey = (direction > 0 ? adjacent.next : adjacent.previous)?.cardKey;
+      if (nextKey === undefined) return;
+      mobileSliding.current = true;
+      const preview = overlay?.querySelector(direction > 0 ? '.list-focus-overlay__peek.is-next' : '.list-focus-overlay__peek.is-previous');
+      const distance = start.metrics?.distance || Math.abs((dialogRef.current?.getBoundingClientRect().top || 0) - (preview?.getBoundingClientRect().top || 0));
+      overlay!.dataset.swipeCommit = 'true';
+      showSwipe(-direction * distance, direction, true);
+      window.clearTimeout(slideTimer.current);
+      slideTimer.current = window.setTimeout(() => {
+        setSlide({ fromKey: focusedIdRef.current, direction, settled: true });
+        setFocusedId(nextKey);
+      }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : carouselDuration);
+    } else if (overlay) {
+      overlay.dataset.swipeSettling = 'true';
+      overlay.style.setProperty('--focus-progress', '0');
+      swipeResetTimer.current = window.setTimeout(() => { if (overlay.isConnected && !mobileSliding.current) { delete overlay.dataset.swipe; delete overlay.dataset.swipeSettling; } }, 280);
+    }
+    touchStart.current = null;
+  }
+
+  useEffect(() => {
+    if (focusedId === null || !window.matchMedia('(max-width: 700px)').matches) return undefined;
+    const overlay = overlayRef.current;
+    if (!overlay) return undefined;
+    const start = (event: TouchEvent) => startSwipe(event);
+    const move = (event: TouchEvent) => moveSwipe(event);
+    const end = (event: TouchEvent) => endSwipe(event);
+    const cancel = () => { touchStart.current = null; delete overlay.dataset.swipe; delete overlay.dataset.swipeSettling; delete overlay!.dataset.swipeCommit; overlay.style.removeProperty('--focus-progress'); };
+    overlay.addEventListener('touchstart', start, { passive: true });
+    overlay.addEventListener('touchmove', move, { passive: false });
+    overlay.addEventListener('touchend', end);
+    overlay.addEventListener('touchcancel', cancel);
+    return () => {
+      overlay.removeEventListener('touchstart', start);
+      overlay.removeEventListener('touchmove', move);
+      overlay.removeEventListener('touchend', end);
+      overlay.removeEventListener('touchcancel', cancel);
+    };
+  }, [focusedId]);
+
+  function openCard(key: string, target: HTMLElement) {
+    if (savingRef.current || gesture.current?.active) return;
+    setSlide(null);
+    focusReturn.current = target;
+    focusScrollTop.current = window.scrollY;
+    setFocusedId(key);
+  }
+
+  return <>
+    <p className="list-grid-announcement" role="status" aria-live="polite">{announcement}</p>
+    {error && <p className="task-list-card__error" role="alert">{error}</p>}
+    <div ref={gridRef} className={`workspace-lists__items list-grid${dragId !== null ? ' is-dragging' : ''}`} aria-busy={saving}>
+      {lists.map((list) => <div key={list.id} ref={(node) => { if (node) slots.current.set(listSlotKey(list.id), node); else slots.current.delete(listSlotKey(list.id)); }} className={`list-grid__slot${listSlotKey(list.id) === dragId ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
+        if (focusedId !== null || (event.target as Element).closest('.task-list-card__meta-tags, .task-list-card__task-title, [role="dialog"], [role="alertdialog"], button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
+        openCard(listSlotKey(list.id), event.currentTarget);
+      }}>
+        {children(list, {
+          onPointerDown: (event) => startDrag(event, list),
+          disabled: saving || focusedId !== null,
+          locked: saving || dragId !== null,
+          onOpen: (event) => openCard(listSlotKey(list.id), event.currentTarget),
+        })}
+      </div>)}
+      {notes.map((note) => <div key={`note-${note.id}`} ref={(node) => { if (node) slots.current.set(noteSlotKey(note.id), node); else slots.current.delete(noteSlotKey(note.id)); }} className={`list-grid__slot list-grid__note-slot${dragId === noteSlotKey(note.id) ? ' is-drag-source' : ''}`} tabIndex={-1} onClick={(event) => {
+        if (focusedId !== null || (event.target as Element).closest('.task-list-card__meta-tags, [role="dialog"], [role="alertdialog"], button, input, textarea, select, label, details, summary, a, [draggable="true"]')) return;
+        openCard(noteSlotKey(note.id), event.currentTarget);
+      }}>
+        {renderNote?.(note, { onPointerDown: (event) => startDrag(event, note, 'note'), disabled: saving || focusedId !== null, locked: saving || dragId !== null, onOpen: (event) => openCard(noteSlotKey(note.id), event.currentTarget) })}
+      </div>)}
+    </div>
+    {focusedCard && createPortal(<div ref={overlayRef} className="workspace-shell list-focus-overlay" data-theme={gridRef.current?.closest('.workspace-shell')?.getAttribute('data-theme') || 'light'} role="dialog" aria-modal="true" aria-label={`${focusedCard.cardType === 'note' ? 'Заметка' : 'Список'} «${focusedCard.title || focusedCard.name}»`}>
+      <button className="list-focus-overlay__backdrop" type="button" aria-label="Закрыть подробный просмотр" onClick={() => setFocusedId(null)} />
+      {previousCard && <div key={`previous-${previousCard.cardKey}`} className="list-focus-overlay__peek is-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(previousCard)}</div></div>}
+      {nextCard && <div key={`next-${nextCard.cardKey}`} className="list-focus-overlay__peek is-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(nextCard)}</div></div>}
+      {followingNext && <div className="list-focus-overlay__peek is-following-next" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(followingNext)}</div></div>}
+      {followingPrevious && <div className="list-focus-overlay__peek is-following-previous" aria-hidden="true"><div className="list-focus-overlay__peek-card" inert>{renderWorkspaceCard(followingPrevious)}</div></div>}
+      {leavingCard && leavingCard.cardKey !== focusedId && <div className={`list-focus-overlay__dialog is-leaving-${slide.direction > 0 ? 'next' : 'previous'}`} aria-hidden="true" inert>{renderWorkspaceCard(leavingCard, undefined, true)}</div>}
+      <div ref={dialogRef} key={focusedId} className={`list-focus-overlay__dialog ${slide ? slide.settled ? 'is-settled' : `is-entering-${slide.direction > 0 ? 'next' : 'previous'}` : 'is-opening'}`} tabIndex={-1}>
+        {renderWorkspaceCard(focusedCard, undefined, true)}
+        <button ref={closeButton} className="list-focus-overlay__close" type="button" aria-label="Закрыть" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+      <button ref={mobileCloseButton} className="list-focus-overlay__close-mobile" type="button" aria-label="Закрыть карточку" onClick={() => setFocusedId(null)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      {orderedCards.length > 1 && <nav className="list-focus-overlay__navigation" aria-label="Переключение между карточками">
+        <button type="button" aria-label={`Предыдущая карточка: ${previousCard?.title || previousCard?.name}`} title="Предыдущая карточка (⌘/Ctrl + ←)" onClick={() => focusAdjacentCard(-1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+        <button type="button" aria-label={`Следующая карточка: ${nextCard?.title || nextCard?.name}`} title="Следующая карточка (⌘/Ctrl + →)" onClick={() => focusAdjacentCard(1)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+      </nav>}
+    </div>, document.body)}
+  </>;
+}

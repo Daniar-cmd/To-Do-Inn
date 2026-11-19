@@ -1,0 +1,1032 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createBoard, createTaskList, deleteBoard, getProfile, getSession, getWorkspace, removeNoteImage, searchWorkspace, sendAuthRequest, updateProfile, updateWorkspace, uploadNoteImage } from '../api.ts';
+import { NotificationsMenu } from '../NotificationsMenu.tsx';
+import { ListCard } from './ListCard.tsx';
+import { ListGrid } from './ListGrid.tsx';
+import { groupTasksByList, moveWorkspaceCardToSlot, workspaceCards } from './listGrid.ts';
+import { ListDatePicker } from './ListDatePicker.tsx';
+import { WorkspaceNoteCard } from './WorkspaceNoteCard.tsx';
+import { WorkspaceNoteCreator } from './WorkspaceNoteCreator.tsx';
+import { UserIcon, PlusIcon, SettingsIcon, BoardTypeIcon, FlagIcon, StarIcon, NoteIcon, ListIcon } from '../ui/icons.tsx';
+import { listThemes, uiText } from '../ui/text.ts';
+import brandLogo from '../../../logos/ToDo-Inn-logo.svg';
+import type { Board, Flag, List, Note, Notification, Profile, ProfileDraft, SearchResult, Task } from './types.ts';
+
+const accountTypeLabels = {
+  individual: 'Индивидуальный аккаунт',
+  team: 'Аккаунт команды',
+  corporate: 'Корпоративный аккаунт',
+};
+
+function ThemeSwitch({ theme, onChange }: { theme: string; onChange: () => void }) {
+  const isDark = theme === 'dark';
+  return (
+    <button className="theme-toggle" type="button" role="switch" aria-label={isDark ? 'Тёмная тема включена' : 'Светлая тема включена'} aria-checked={isDark} onClick={onChange}>
+      <span className="theme-toggle__track" aria-hidden="true">
+        <span className="theme-toggle__thumb">
+          {isDark ? (
+            <svg className="theme-toggle__moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z" /></svg>
+          ) : (
+            <svg className="theme-toggle__sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></svg>
+          )}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+export function Workspace() {
+  const [registrationArrival, setRegistrationArrival] = useState(() => {
+    try { return window.sessionStorage.getItem('todo-inn-registration-arrival') === '1'; } catch { return false; }
+  });
+  const [themePreference, setThemePreference] = useState(() => {
+    try { return localStorage.getItem('todo-inn-theme') || 'system'; } catch { return 'system'; }
+  });
+  const [systemTheme, setSystemTheme] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const theme = themePreference === 'system' ? systemTheme : themePreference;
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreListOptionsOpen, setMoreListOptionsOpen] = useState(false);
+  const [csrfToken, setCsrfToken] = useState('');
+  const [account, setAccount] = useState<Profile | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationBusyId, setNotificationBusyId] = useState<number | null>(null);
+  const [legacyUpdateRequired, setLegacyUpdateRequired] = useState(false);
+  const [legacyNoticeDismissed, setLegacyNoticeDismissed] = useState(false);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState('');
+  const [workspaceNotice, setWorkspaceNotice] = useState('');
+  const activeBoardId = useRef<string | null>(null);
+  const workspaceRequestId = useRef(0);
+  const searchRequestId = useRef(0);
+  const removedListIds = useRef(new Set<number>());
+  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState<ProfileDraft | null>(null);
+  const [profileError, setProfileError] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [avatarChanged, setAvatarChanged] = useState(false);
+  const [board, setBoard] = useState<Board | null>(null);
+  const [boards, setBoards] = useState<Board[]>([]);
+  const [corporateAccounts, setCorporateAccounts] = useState<Array<{ id: number; role: string; name: string }>>([]);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [inviteAccountId, setInviteAccountId] = useState('');
+  const [inviteIdentifier, setInviteIdentifier] = useState('');
+  const [inviteRole, setInviteRole] = useState('admin');
+  const [inviteMessage, setInviteMessage] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [boardFormOpen, setBoardFormOpen] = useState(false);
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
+  const [editingBoardId, setEditingBoardId] = useState<number | null>(null);
+  const [boardDeleteTarget, setBoardDeleteTarget] = useState<Board | null>(null);
+  const [boardDeleteError, setBoardDeleteError] = useState('');
+  const [deletingBoard, setDeletingBoard] = useState(false);
+  const [boardName, setBoardName] = useState('');
+  const [boardDescription, setBoardDescription] = useState('');
+  const [boardType, setBoardType] = useState('personal');
+  const [boardCorporateAccountId, setBoardCorporateAccountId] = useState('');
+  const [boardFormError, setBoardFormError] = useState('');
+  const [creatingBoard, setCreatingBoard] = useState(false);
+  const [flags, setFlags] = useState<Flag[]>([]);
+  const [lists, setLists] = useState<List[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const tasksByList = useMemo(() => groupTasksByList(tasks), [tasks]);
+  const [filter, setFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [activeListId, setActiveListId] = useState<number | null>(null);
+  const [name, setName] = useState('');
+  const [creationMode, setCreationMode] = useState('list');
+  const [listDescription, setListDescription] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [important, setImportant] = useState(false);
+  const [selectedTheme, setSelectedTheme] = useState('blue');
+  const [selectedFlagId, setSelectedFlagId] = useState<number | string | null>(null);
+  const [newFlagName, setNewFlagName] = useState('');
+  const [flagPickerOpen, setFlagPickerOpen] = useState(false);
+  const [listDate, setListDate] = useState<string | null>(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [creatingFlag, setCreatingFlag] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [noteSaving, setNoteSaving] = useState(false);
+
+  useEffect(() => {
+    document.title = 'Рабочее пространство — To Do Inn!';
+    document.body.classList.add('workspace-body');
+    return () => document.body.classList.remove('workspace-body');
+  }, []);
+
+  useEffect(() => {
+    if (!registrationArrival) return undefined;
+    try { window.sessionStorage.removeItem('todo-inn-registration-arrival'); } catch { /* Transition is an enhancement only. */ }
+    const timer = window.setTimeout(() => setRegistrationArrival(false), 850);
+    return () => window.clearTimeout(timer);
+  }, [registrationArrival]);
+
+  useEffect(() => {
+    function closeOpenMenus(event: MouseEvent) {
+      document.querySelectorAll<HTMLDetailsElement>('details[open]').forEach((details) => {
+        if (!details.contains(event.target as Node)) details.open = false;
+      });
+    }
+    document.addEventListener('click', closeOpenMenus);
+    return () => document.removeEventListener('click', closeOpenMenus);
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('todo-inn-theme', themePreference); } catch { /* Theme remains active for this page. */ }
+  }, [themePreference]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return undefined;
+    const updateSystemTheme = (event: MediaQueryListEvent | MediaQueryList) => setSystemTheme(event.matches ? 'dark' : 'light');
+    updateSystemTheme(media);
+    media.addEventListener?.('change', updateSystemTheme);
+    return () => media.removeEventListener?.('change', updateSystemTheme);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    getSession()
+      .then(async (session) => {
+        if (!session.user) {
+          window.location.replace('/');
+          return;
+        }
+
+        // The auth session intentionally contains only public identity fields; load the full
+        // profile here so a persisted avatar appears in the header after page reloads.
+        const [profileData, defaultWorkspace] = await Promise.all([getProfile(), getWorkspace()]);
+        const lastBoardStorageKey = `todo-inn-last-board-${session.user.id}`;
+        let rememberedBoardId = null;
+        try {
+          rememberedBoardId = window.localStorage.getItem(lastBoardStorageKey);
+        } catch { /* Restore the default board when browser storage is unavailable. */ }
+        const rememberedBoardExists = rememberedBoardId
+          && defaultWorkspace.boards.some((item: Board) => String(item.id) === rememberedBoardId);
+        const workspace = rememberedBoardExists && String(defaultWorkspace.board!.id) !== rememberedBoardId
+          ? await getWorkspace(rememberedBoardId)
+          : defaultWorkspace;
+        activeBoardId.current = String(workspace.board!.id);
+        try {
+          window.localStorage.setItem(lastBoardStorageKey, String(workspace.board!.id));
+        } catch { /* Board selection remains active for this page. */ }
+        setAccount(profileData.profile);
+        setThemePreference(profileData.profile.preferred_theme || 'system');
+        setCsrfToken(session.csrf_token);
+        sendAuthRequest('legacy_account_status', {}, session.csrf_token)
+          .then((status) => setLegacyUpdateRequired(status.required === true))
+          .catch(() => {});
+        setBoard(workspace.board);
+        setBoards(workspace.boards);
+        setCorporateAccounts(workspace.corporate_accounts || []);
+        setFlags(workspace.flags);
+        setLists(workspace.lists);
+        setNotes(workspace.notes || []);
+        setTasks(workspace.tasks || []);
+      })
+      .catch((error) => setWorkspaceLoadError((error as Error).message));
+  }, []);
+
+  useEffect(() => {
+    if (!csrfToken) return undefined;
+    let active = true;
+    const controller = new AbortController();
+    sendAuthRequest('get_notifications', {}, csrfToken)
+      .then((data) => { if (active) setNotifications(data.notifications || []); })
+      .catch((error) => { if (active) setNotificationError((error as Error).message); });
+    return () => { active = false; };
+  }, [csrfToken]);
+
+  async function markNotificationRead(notification: Notification) {
+    if (notification.is_read || notificationBusyId !== null) return;
+    setNotificationBusyId(notification.id);
+    setNotificationError('');
+    try {
+      await sendAuthRequest('mark_notification_read', { notification_id: notification.id }, csrfToken);
+      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, is_read: true } : item));
+    } catch (error) {
+      setNotificationError((error as Error).message);
+    } finally {
+      setNotificationBusyId(null);
+    }
+  }
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    const requestId = ++searchRequestId.current;
+    if (!query) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      setSearchError('');
+      return undefined;
+    }
+
+    let active = true;
+    const controller = new AbortController();
+    setSearchLoading(true);
+    setSearchResults(null);
+    setSearchError('');
+    const timeout = window.setTimeout(() => {
+      searchWorkspace(query, { signal: controller.signal })
+        .then(({ results }) => { if (active && requestId === searchRequestId.current) setSearchResults(results.filter((list: SearchResult) => !removedListIds.current.has(list.id))); })
+        .catch((error) => { if (active && requestId === searchRequestId.current) setSearchError((error as Error).message); })
+        .finally(() => { if (active && requestId === searchRequestId.current) setSearchLoading(false); });
+    }, 180);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [searchQuery]);
+
+  function updateFilter(value: string) {
+    setFilter(value);
+    setMobileMenuOpen(false);
+  }
+
+  async function selectBoard(boardId: number) {
+    const requestId = ++workspaceRequestId.current;
+    activeBoardId.current = String(boardId);
+    if (String(boardId) === String(board!.id)) return;
+    try {
+      const workspace = await getWorkspace(boardId);
+      if (requestId !== workspaceRequestId.current) return;
+      setBoard(workspace.board);
+      try {
+        if (account?.id) window.localStorage.setItem(`todo-inn-last-board-${account.id}`, String(workspace.board!.id));
+      } catch { /* Board selection remains active for this page. */ }
+      setBoards(workspace.boards);
+      setCorporateAccounts(workspace.corporate_accounts || []);
+      setFlags(workspace.flags);
+      setLists(workspace.lists);
+      setNotes(workspace.notes || []);
+      setTasks(workspace.tasks || []);
+      setFilter('all');
+      setActiveListId(null);
+    } catch (error) {
+      if (requestId === workspaceRequestId.current) {
+        activeBoardId.current = String(board!.id);
+        setFeedback((error as Error).message);
+      }
+    }
+  }
+
+  async function refreshBoardData(boardId: number) {
+    if (String(activeBoardId.current) !== String(boardId)) return;
+    const requestId = ++workspaceRequestId.current;
+    try {
+      const workspace = await getWorkspace(boardId);
+      if (requestId !== workspaceRequestId.current || String(activeBoardId.current) !== String(boardId)) return;
+      setLists(workspace.lists);
+      setNotes(workspace.notes || []);
+      setFlags(workspace.flags);
+      setTasks(workspace.tasks || []);
+    } catch (error) {
+      if (requestId === workspaceRequestId.current && String(activeBoardId.current) === String(boardId)) {
+        setFeedback((error as Error).message);
+      }
+    }
+  }
+
+  function removeListFromView(list: List, unavailable = false) {
+    // Invalidate older reads so they cannot resurrect a just-deleted card.
+    if (String(activeBoardId.current) === String(list.board_id)) ++workspaceRequestId.current;
+    removedListIds.current.add(list.id);
+    setLists((current) => current.filter((item) => item.id !== list.id));
+    setTasks((current) => current.filter((task) => task.list_id !== list.id));
+    setSearchResults((current) => current?.filter((item) => item.id !== list.id) ?? null);
+    setWorkspaceNotice(unavailable ? 'Список уже удалён или больше недоступен. Устаревшая карточка убрана.' : '');
+  }
+
+  async function toggleListPinned(list: List, isPinned: boolean) {
+    await updateWorkspace({ action: 'set_list_pinned', list_id: list.id, is_pinned: isPinned }, csrfToken);
+    if (searchQuery.trim()) {
+      await refreshSearchResults();
+    } else {
+      await refreshBoardData(list.board_id);
+    }
+  }
+
+  async function toggleNotePinned(note: Note, isPinned: boolean) {
+    await updateWorkspace({ action: 'set_note_pinned', note_id: note.id, is_pinned: isPinned }, csrfToken);
+    await refreshBoardData(note.board_id);
+  }
+
+  async function saveNote(note: Note, fields: Partial<Note>, imageChange: { file?: File; offset?: number; remove?: boolean } = {}) {
+    await updateWorkspace({ action: 'update_note', note_id: note.id, ...fields }, csrfToken);
+    if (imageChange.file) await uploadNoteImage(note.id, imageChange.file, imageChange.offset ?? 0, csrfToken);
+    else if (imageChange.remove) await removeNoteImage(note.id, csrfToken);
+    await refreshBoardData(note.board_id);
+  }
+
+  async function reorderWorkspaceCards(sourceId: number, targetId: number, sourceType: 'list' | 'note', targetType: 'list' | 'note') {
+    const boardId = board!.id;
+    const requestId = ++workspaceRequestId.current;
+    const beforeLists = lists;
+    const beforeNotes = notes;
+    const cards = workspaceCards(lists, notes);
+    const sourceKey = `${sourceType}:${sourceId}`;
+    const targetKey = `${targetType}:${targetId}`;
+    const insertBefore = cards.findIndex((item) => item.cardKey === sourceKey) > cards.findIndex((item) => item.cardKey === targetKey);
+    const nextCards = moveWorkspaceCardToSlot(cards, sourceKey, targetKey)
+      .map((item, sort_order) => ({ ...item, sort_order }));
+    setLists(nextCards.filter((item): item is List & { cardType: 'list'; cardKey: string } => item.cardType === 'list').map(({ cardType, cardKey, ...item }) => item));
+    setNotes(nextCards.filter((item): item is Note & { cardType: 'note'; cardKey: string } => item.cardType === 'note').map(({ cardType, cardKey, ...item }) => item));
+    try {
+      await updateWorkspace({ action: 'reorder_workspace_item', item_id: sourceId, target_item_id: targetId,
+        item_type: sourceType, target_item_type: targetType, insert_before: insertBefore }, csrfToken);
+      await refreshBoardData(boardId);
+    } catch (error) {
+      if (String(activeBoardId.current) === String(boardId)) {
+        if (requestId === workspaceRequestId.current) { setLists(beforeLists); setNotes(beforeNotes); }
+        else await refreshBoardData(boardId);
+      }
+      throw error;
+    }
+  }
+
+  async function moveTask(taskId: number, targetListId: number, targetTaskId: number | null) {
+    const boardId = board!.id;
+    try {
+      await updateWorkspace({ action: 'move_task', task_id: taskId, target_list_id: targetListId,
+        target_task_id: targetTaskId }, csrfToken);
+    } catch (error) {
+      setFeedback((error as Error).message);
+    }
+    await refreshBoardData(boardId);
+  }
+
+  async function handleCreateBoard(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!boardName.trim()) {
+      setBoardFormError('Введите название доски.');
+      return;
+    }
+    setCreatingBoard(true);
+    setBoardFormError('');
+    try {
+      const { board: createdBoard } = await createBoard({
+        name: boardName.trim(),
+        description: boardDescription.trim(),
+        board_type: boardType,
+        ...(boardType === 'corporate' ? { corporate_account_id: Number(boardCorporateAccountId) } : {}),
+      }, csrfToken);
+      const workspace = await getWorkspace(createdBoard.id);
+      activeBoardId.current = String(workspace.board!.id);
+      setBoards(workspace.boards);
+      setCorporateAccounts(workspace.corporate_accounts || []);
+      setBoard(workspace.board);
+      try {
+        if (account?.id) window.localStorage.setItem(`todo-inn-last-board-${account.id}`, String(workspace.board!.id));
+      } catch { /* Board selection remains active for this page. */ }
+      setFlags(workspace.flags);
+      setLists(workspace.lists);
+      setNotes(workspace.notes || []);
+      setTasks(workspace.tasks || []);
+      setFilter('all');
+      setActiveListId(null);
+      setSearchQuery('');
+      setBoardName('');
+      setBoardDescription('');
+      setBoardType('personal');
+      setBoardCorporateAccountId('');
+      setBoardFormOpen(false);
+    } catch (error) {
+      setBoardFormError((error as Error).message);
+    } finally {
+      setCreatingBoard(false);
+    }
+  }
+
+  function openBoardSettings(item: Board) {
+    setEditingBoardId(item.id);
+    setBoardName(item.name);
+    setBoardDescription(item.description || '');
+    setBoardType(item.board_type || 'personal');
+    setBoardCorporateAccountId(item.corporate_account_id ? String(item.corporate_account_id) : '');
+    setBoardFormError('');
+    setBoardSettingsOpen(true);
+  }
+
+  async function handleInviteMember(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!inviteIdentifier.trim() || !inviteAccountId || inviting) return;
+    setInviting(true);
+    setInviteMessage('');
+    try {
+      const result = await updateWorkspace({
+        action: 'invite_member',
+        corporate_account_id: Number(inviteAccountId),
+        identifier: inviteIdentifier.trim(),
+        role: inviteRole,
+      }, csrfToken);
+      setInviteMessage(result.email_sent ? 'Приглашение отправлено.' : 'Приглашение создано, но письмо не отправилось.');
+      if (result.email_sent) setInviteIdentifier('');
+    } catch (error) {
+      setInviteMessage((error as Error).message);
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function handleUpdateBoard(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!boardName.trim()) {
+      setBoardFormError('Введите название доски.');
+      return;
+    }
+    setCreatingBoard(true);
+    setBoardFormError('');
+    try {
+      const { board: updatedBoard } = await updateWorkspace({
+        action: 'update_board',
+        board_id: editingBoardId,
+        name: boardName.trim(),
+        description: boardDescription.trim(),
+        board_type: boardType,
+      }, csrfToken);
+      setBoards((current) => current.map((item) => item.id === updatedBoard.id ? updatedBoard : item));
+      if (board!.id === updatedBoard.id) setBoard(updatedBoard);
+      setBoardSettingsOpen(false);
+      setEditingBoardId(null);
+    } catch (error) {
+      setBoardFormError((error as Error).message);
+    } finally {
+      setCreatingBoard(false);
+    }
+  }
+
+  async function handleDeleteBoard() {
+    if (!boardDeleteTarget) return;
+    setDeletingBoard(true);
+    setBoardDeleteError('');
+    try {
+      const { replacement_board_id: replacementBoardId } = await deleteBoard(boardDeleteTarget.id, csrfToken);
+      const remainingBoards = boards.filter((item) => item.id !== boardDeleteTarget.id);
+      setBoards(remainingBoards);
+      setBoardDeleteTarget(null);
+      setBoardSettingsOpen(false);
+      setEditingBoardId(null);
+      setSearchQuery('');
+      if (board!.id === boardDeleteTarget.id) {
+        const workspace = await getWorkspace(replacementBoardId);
+        activeBoardId.current = String(workspace.board!.id);
+        setBoard(workspace.board);
+        try {
+          if (account?.id) window.localStorage.setItem(`todo-inn-last-board-${account.id}`, String(workspace.board!.id));
+        } catch { /* Board selection remains active for this page. */ }
+        setBoards(workspace.boards);
+        setCorporateAccounts(workspace.corporate_accounts || []);
+        setFlags(workspace.flags);
+        setLists(workspace.lists);
+        setNotes(workspace.notes || []);
+        setTasks(workspace.tasks || []);
+        setFilter('all');
+        setActiveListId(null);
+      }
+    } catch (error) {
+      setBoardDeleteError((error as Error).message);
+    } finally {
+      setDeletingBoard(false);
+    }
+  }
+
+  async function refreshSearchResults() {
+    const requestId = ++searchRequestId.current;
+    try {
+      const { results } = await searchWorkspace(searchQuery.trim());
+      if (requestId !== searchRequestId.current) return;
+      setSearchResults(results.filter((list: SearchResult) => !removedListIds.current.has(list.id)));
+      await refreshBoardData(board!.id);
+    } finally {
+      if (requestId === searchRequestId.current) setSearchLoading(false);
+    }
+  }
+
+  function addCreatedFlag(flag: Flag) {
+    const appendUnique = (current: Flag[]) => current.some((item) => String(item.id) === String(flag.id))
+      ? current
+      : [...current, flag].sort((first, second) => first.name.localeCompare(second.name, 'ru'));
+    if (String(activeBoardId.current) === String(flag.board_id)) {
+      setFlags(appendUnique);
+    }
+    setSearchResults((current) => current?.map((result) => String(result.board_id) === String(flag.board_id)
+      ? { ...result, flags: appendUnique(result.flags) }
+      : result) ?? null);
+  }
+
+  async function createFlagForNewList(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    const trimmedName = newFlagName.trim();
+    if (!trimmedName) return;
+    const details = event.currentTarget.closest('details');
+    setCreatingFlag(true);
+    setFeedback('');
+    try {
+      const { flag } = await updateWorkspace({ action: 'create_flag', board_id: board!.id, name: trimmedName }, csrfToken);
+      addCreatedFlag(flag);
+      setSelectedFlagId(flag.id);
+      setNewFlagName('');
+      setFlagPickerOpen(false);
+      if (details) details.open = false;
+    } catch (error) {
+      setFeedback((error as Error).message);
+    } finally {
+      setCreatingFlag(false);
+    }
+  }
+
+  function chooseFlag(id: number | string | null) {
+    setSelectedFlagId(id);
+    setNewFlagName('');
+    setFlagPickerOpen(false);
+  }
+
+  function handleNameChange(value: string) {
+    setName(value);
+    const hasName = value.trim().length > 0;
+    setExpanded(creationMode === 'list' && hasName);
+    if (!hasName) setFeedback('');
+  }
+
+  function toggleCreationMode() {
+    const nextMode = creationMode === 'list' ? 'note' : 'list';
+    setCreationMode(nextMode);
+    setExpanded(nextMode === 'list' && Boolean(name.trim()));
+    setFeedback('');
+    setMoreListOptionsOpen(false);
+    setFlagPickerOpen(false);
+    setDatePickerOpen(false);
+  }
+
+  function cancelListCreation() {
+    if (saving) return;
+    setName('');
+    setListDescription('');
+    setExpanded(false);
+    setImportant(false);
+    setSelectedTheme('blue');
+    setSelectedFlagId(null);
+    setNewFlagName('');
+    setFlagPickerOpen(false);
+    setListDate(null);
+    setDatePickerOpen(false);
+    setMoreListOptionsOpen(false);
+    setFeedback('');
+  }
+
+  async function handleCreateList(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (creationMode !== 'list') return;
+    if (!name.trim()) {
+      setFeedback('Введите название списка.');
+      return;
+    }
+
+    setSaving(true);
+    setFeedback('');
+    try {
+      const { list } = await createTaskList({
+        board_id: board!.id,
+        name: name.trim(),
+        is_important: important,
+        theme: selectedTheme,
+        flag_id: selectedFlagId,
+        new_flag_name: newFlagName.trim(),
+        due_date: listDate,
+      }, csrfToken);
+
+      let descriptionSaveError = '';
+      const descriptionText = listDescription.trim();
+      if (descriptionText) {
+        try {
+          await updateWorkspace({
+            action: 'update_list',
+            list_id: list.id,
+            name: list.name,
+            description: descriptionText,
+            theme: list.theme,
+            flag_id: list.flag?.id || null,
+            new_flag_name: '',
+            is_important: list.is_important,
+          }, csrfToken);
+        } catch (error) {
+          descriptionSaveError = (error as Error).message;
+        }
+      }
+
+      if (list.flag) {
+        setFlags((current) => current.some((flag) => flag.id === list.flag.id)
+          ? current
+          : [...current, list.flag].sort((first, second) => first.name.localeCompare(second.name, 'ru')));
+      }
+      setActiveListId(list.id);
+      setName('');
+      setListDescription('');
+      setExpanded(Boolean(descriptionSaveError));
+      setImportant(false);
+      setSelectedTheme('blue');
+      setSelectedFlagId(null);
+      setNewFlagName('');
+      setFlagPickerOpen(false);
+      setListDate(null);
+      setDatePickerOpen(false);
+      setMoreListOptionsOpen(false);
+      setFeedback(descriptionSaveError ? `Список создан, но описание не сохранено: ${descriptionSaveError}` : '');
+      await refreshBoardData(board!.id);
+    } catch (error) {
+      setFeedback((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await sendAuthRequest('logout', {}, csrfToken);
+      window.location.assign('/');
+    } catch (error) {
+      setFeedback((error as Error).message);
+    }
+  }
+
+  async function openProfileSettings() {
+    setProfileError('');
+    setProfileDraft(null);
+    setProfileSettingsOpen(true);
+    try {
+      const { profile } = await getProfile();
+      setAccount(profile);
+      setProfileDraft({
+        username: profile.username,
+        email: profile.email || '',
+        secondary_email: profile.secondary_email || '',
+        about: profile.about || '',
+        github_url: profile.github_url || '',
+        telegram_url: profile.telegram_url || '',
+        preferred_theme: profile.preferred_theme || 'system',
+        avatar: profile.avatar,
+        current_password: '',
+        new_password: '',
+        confirm_password: '',
+      });
+      setAvatarChanged(false);
+    } catch (error) {
+      setProfileError((error as Error).message);
+    }
+  }
+
+  function handleAvatarFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (file.size > 1_048_576) {
+      setProfileError('Размер аватара не должен превышать 1 МБ.');
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setProfileError('Выберите изображение JPEG, PNG или WebP.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setProfileDraft((current) => current ? { ...current, avatar: reader.result as string } : current);
+        setAvatarChanged(true);
+        setProfileError('');
+      }
+    };
+    reader.onerror = () => setProfileError('Не удалось прочитать изображение.');
+    reader.readAsDataURL(file);
+  }
+
+  async function saveProfileSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profileDraft) return;
+    setProfileSaving(true);
+    setProfileError('');
+    const data: Partial<ProfileDraft> = { ...profileDraft };
+    if (!avatarChanged) delete data.avatar;
+    try {
+      const { profile, signed_out: signedOut } = await updateProfile(data, csrfToken);
+      if (signedOut) {
+        window.location.assign('/');
+        return;
+      }
+      setAccount(profile);
+      setThemePreference(profile.preferred_theme || 'system');
+      setProfileDraft({
+        ...profile,
+        email: profile.email || '',
+        secondary_email: profile.secondary_email || '',
+        avatar: profile.avatar,
+        current_password: '',
+        new_password: '',
+        confirm_password: '',
+      });
+      setAvatarChanged(false);
+      setProfileSettingsOpen(false);
+    } catch (error) {
+      setProfileError((error as Error).message);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  if (!account || !board) {
+    return <div className="app-loading" role={workspaceLoadError ? 'alert' : 'status'}>
+      {workspaceLoadError
+        ? <><p>{workspaceLoadError}</p><button type="button" onClick={() => window.location.reload()}>Повторить</button></>
+        : 'Загрузка рабочего пространства…'}
+    </div>;
+  }
+
+  const activeList = lists.find((list) => list.id === activeListId);
+  const selectedFlag = flags.find((flag) => flag.id === selectedFlagId);
+  const visibleLists = lists.filter((list) => {
+    if (filter === 'important') return list.is_important;
+    if (filter === 'planned') return false;
+    if (filter.startsWith('flag:')) return String(list.flag?.id) === filter.slice(5);
+    return true;
+  });
+  const visibleNotes = notes.filter((note) => {
+    if (filter === 'important') return note.is_important;
+    if (filter === 'planned') return false;
+    if (filter.startsWith('flag:')) return String(note.flag?.id) === filter.slice(5);
+    return true;
+  });
+  const manageableCorporateAccounts = corporateAccounts.filter((item) => item.role === 'owner');
+  const canManageBoard = (item: Board) => !item.corporate_account_id
+    || corporateAccounts.some((organization) => organization.id === item.corporate_account_id && organization.role === 'owner');
+
+  return (
+    <div className={`workspace-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}${mobileMenuOpen ? ' is-mobile-menu-open' : ''}${registrationArrival ? ' is-registration-arrival' : ''}`} data-theme={theme}>
+      <header className="workspace-header">
+        <div className="workspace-header__left">
+          <button className="mobile-menu-toggle" type="button" aria-label={mobileMenuOpen ? 'Закрыть меню фильтров' : 'Открыть меню фильтров'} aria-controls="workspace-sidebar" aria-expanded={mobileMenuOpen} onClick={() => { setSidebarCollapsed(false); setMobileMenuOpen((current) => !current); }}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+          <ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} />
+        </div>
+
+        <label className="workspace-search">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+          <input type="search" placeholder="Поиск по всем доскам" aria-label="Поиск по всем доскам" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+        </label>
+
+        <div className="workspace-header__right">
+          <div className="workspace-header__notifications"><NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} /></div>
+
+          <details className="profile-menu">
+            <summary className="profile-menu__trigger" aria-label="Открыть профиль">
+              <span className="profile-menu__avatar" aria-hidden="true">{account.avatar ? <img src={account.avatar} alt="" /> : <UserIcon />}</span>
+              <span className="profile-menu__identity">
+                <span className="profile-menu__name">{account.username}</span>
+                <span className="profile-menu__caption">Личный кабинет</span>
+              </span>
+              <svg className="profile-menu__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>
+            </summary>
+            <div className="profile-menu__panel">
+              <p className="profile-menu__account-type">{accountTypeLabels[account.account_type as keyof typeof accountTypeLabels] || 'Аккаунт'}</p>
+              <div className="profile-menu__notifications"><NotificationsMenu notifications={notifications} unreadCount={notifications.filter((item) => !item.is_read).length} onRead={markNotificationRead} busyId={notificationBusyId} error={notificationError} /></div>
+              <button className="profile-menu__settings" type="button" onClick={openProfileSettings}><SettingsIcon /><span>Настройки аккаунта</span></button>
+              <button className="profile-menu__logout" type="button" onClick={handleLogout}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5m5 5H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></svg><span>Выйти из аккаунта</span></button>
+            </div>
+          </details>
+        </div>
+      </header>
+      {legacyUpdateRequired && !legacyNoticeDismissed && <aside className="legacy-update-notice" role="status">
+        <button className="legacy-update-notice__close" type="button" aria-label="Закрыть предупреждение" onClick={() => setLegacyNoticeDismissed(true)}>×</button>
+        <h2>Обновите данные!</h2>
+        <p>С 1 ноября 2026 года мы прекращаем поддержку старых аккаунтов. Пройдите регистрацию заново, чтобы сохранить доступ. Ваши доски, списки и задачи останутся на месте.</p>
+        <a className="legacy-update-notice__action" href="/pages/register.html?upgrade=1">Обновить</a>
+      </aside>}
+      {mobileMenuOpen && <button className="mobile-menu-backdrop" type="button" aria-label="Закрыть меню фильтров" onClick={() => setMobileMenuOpen(false)} />}
+
+      <nav className="board-bar" aria-label="Рабочие доски">
+        <button className={`sidebar-toggle ${sidebarCollapsed ? 'is-collapsed' : 'is-expanded'}`} type="button" aria-label={sidebarCollapsed ? 'Показать боковую панель' : 'Скрыть боковую панель'} aria-controls="workspace-sidebar" aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Показать боковую панель' : 'Скрыть боковую панель'} onClick={() => setSidebarCollapsed((current) => !current)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button>
+        <button className="board-bar__add" type="button" aria-label="Создать доску" title="Создать доску" onClick={() => { setBoardFormError(''); setBoardType('personal'); setBoardCorporateAccountId(String(manageableCorporateAccounts[0]?.id || '')); setBoardFormOpen(true); }}><PlusIcon /></button>
+        {manageableCorporateAccounts.length > 0 && <button className="board-bar__invite" type="button" onClick={() => {
+          setInviteAccountId(String(manageableCorporateAccounts[0].id));
+          setInviteIdentifier('');
+          setInviteMessage('');
+          setInviteDialogOpen(true);
+        }}>Пригласить участника</button>}
+        {boards.map((item) => <div className={`board-tab-group${String(item.id) === String(board!.id) ? ' is-active' : ''}`} key={item.id}>
+          <button className="board-tab" type="button" aria-current={String(item.id) === String(board!.id) ? 'page' : undefined} onClick={() => selectBoard(item.id)}>{item.name}</button>
+          {canManageBoard(item) && <button className="board-tab-settings" type="button" disabled={String(item.id) !== String(board!.id)} aria-label={`Настройки доски «${item.name}»`} title="Настройки доски" onClick={() => openBoardSettings(item)}><SettingsIcon /></button>}
+        </div>)}
+      </nav>
+
+      <div className="workspace-layout">
+        <aside className="workspace-sidebar" id="workspace-sidebar" aria-label="Фильтры и флаги">
+          <header className="workspace-sidebar__mobile-header"><h2>Фильтры</h2><button type="button" aria-label="Закрыть меню" onClick={() => setMobileMenuOpen(false)}>×</button></header>
+          <div className="workspace-sidebar__theme"><span>Тема оформления</span><ThemeSwitch theme={theme} onChange={() => setThemePreference(theme === 'dark' ? 'light' : 'dark')} /></div>
+          <nav className="sidebar-filters" aria-label="Быстрые фильтры">
+            <button className={`sidebar-filter${filter === 'all' ? ' is-active' : ''}`} type="button" onClick={() => updateFilter('all')}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 5h16M4 12h16M4 19h16" /></svg><span>Все элементы</span>
+            </button>
+            <button className={`sidebar-filter${filter === 'important' ? ' is-active' : ''}`} type="button" onClick={() => updateFilter('important')}>
+              <StarIcon /><span>Важное</span>
+            </button>
+            <button className={`sidebar-filter${filter === 'planned' ? ' is-active' : ''}`} type="button" onClick={() => updateFilter('planned')}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18" /></svg><span>Запланировано</span>
+            </button>
+          </nav>
+
+          <div className="workspace-sidebar__divider" role="separator" />
+
+          <section className="sidebar-section" aria-labelledby="flags-heading">
+            <h2 className="sidebar-section__heading" id="flags-heading">Мои флаги</h2>
+            <div className="sidebar-flags">
+              {flags.length === 0 && <p className="sidebar-section__empty">Флагов пока нет</p>}
+              {flags.map((flag) => (
+                <button className={`sidebar-filter sidebar-flag${filter === `flag:${flag.id}` ? ' is-active' : ''}`} type="button" key={flag.id} onClick={() => updateFilter(`flag:${flag.id}`)}>
+                  <FlagIcon color={flag.color} /><span>{flag.name}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </aside>
+
+        <main className="workspace-main" aria-label="Рабочая область">
+          {workspaceNotice && <p className="workspace-notice" role="status">{workspaceNotice}</p>}
+          {!searchQuery.trim() && filter === 'planned' ? <div className="workspace-placeholder" role="status">Эта функция пока в разработке</div> : <>
+          {!searchQuery.trim() && <section className="list-creator" aria-label="Создать список или заметку">
+            <div className="list-creator__mode-row">
+              <button className="list-option-button list-creator__mode-toggle" type="button" aria-label={creationMode === 'note' ? uiText.creator.switchToList : uiText.creator.switchToNote} title={creationMode === 'note' ? uiText.creator.switchToList : uiText.creator.switchToNote} aria-pressed={creationMode === 'note'} disabled={saving || noteSaving} onClick={toggleCreationMode}><span className="list-creator__mode-icon is-note" aria-hidden="true"><NoteIcon /></span><span className="list-creator__mode-icon is-list" aria-hidden="true"><ListIcon /></span></button>
+              {creationMode === 'list' ? <form className={expanded ? 'is-expanded' : ''} onSubmit={handleCreateList}>
+                <div className="list-creator__name-row">
+                  <button className="list-creator__cancel" type="button" aria-label={expanded ? 'Отменить создание списка' : 'Ввести название нового списка'} title={expanded ? 'Отменить создание' : uiText.creator.newList} disabled={saving} onClick={() => expanded ? cancelListCreation() : document.getElementById('new-list-name')?.focus()}><PlusIcon /></button>
+                  <label className="list-creator__name-field" htmlFor="new-list-name">
+                    <input id="new-list-name" name="todo-list-title" type="text" maxLength={80} placeholder={uiText.creator.newList} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck="false" aria-label="Название нового списка" value={name} onChange={(event) => handleNameChange(event.target.value)} />
+                  </label>
+                  {expanded && creationMode === 'list' && <button className="list-creator__submit" type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Создать'}</button>}
+                </div>
+
+                {expanded && creationMode === 'list' && (
+                <div className="list-creator__options">
+                  <div className={`list-creator__toolbar${moreListOptionsOpen ? ' is-more-open' : ''}`}>
+                    <button className={`list-option-button${important ? ' is-selected' : ''}`} type="button" aria-pressed={important} aria-label={important ? 'Убрать важность списка' : 'Сделать список важным'} title="Важный список" onClick={() => setImportant((current) => !current)}>
+                      <StarIcon />
+                    </button>
+
+                    <div className="list-creator__extra-row">
+                    <details className="list-description-picker">
+                      <summary className="list-option-button" aria-label="Добавить описание списка" title="Описание списка">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 5h14M5 10h14M5 15h9M5 19h6"/></svg>
+                      </summary>
+                      <div className="list-description-picker__panel">
+                        <textarea id="new-list-description" aria-label="Описание нового списка" maxLength={2000} placeholder="Напишите описание" value={listDescription} onChange={(event) => setListDescription(event.target.value)} />
+                      </div>
+                    </details>
+
+                    <details className="flag-picker" open={flagPickerOpen} onToggle={(event) => setFlagPickerOpen(event.currentTarget.open)}>
+                      <summary className={`list-option-button${selectedFlag || newFlagName.trim() ? ' is-selected' : ''}`} aria-label="Назначить флаг" title="Назначить флаг">
+                        <FlagIcon color={newFlagName.trim() ? 'blue' : selectedFlag?.color} />
+                        <span className="flag-picker__selected-label">{newFlagName ? 'Новый флаг' : selectedFlag?.name || 'Флаг'}</span>
+                      </summary>
+                      <div className="flag-picker__panel">
+                        <p className="flag-picker__title">Выберите флаг</p>
+                        <button className={`flag-picker__choice${selectedFlagId === null && !newFlagName ? ' is-selected' : ''}`} type="button" aria-pressed={selectedFlagId === null && !newFlagName} onClick={() => chooseFlag(null)}>Без флага</button>
+              <div className="flag-picker__existing">
+                          {flags.map((flag) => (
+                            <button className={`flag-picker__choice${selectedFlagId === flag.id ? ' is-selected' : ''}`} type="button" key={flag.id} aria-pressed={selectedFlagId === flag.id} onClick={() => chooseFlag(flag.id)}>
+                              <FlagIcon color={flag.color} /><span>{flag.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <label className="flag-picker__custom-label" htmlFor="custom-flag-name">Или создайте свой</label>
+                        <div className="flag-picker__create-row"><input className="flag-picker__custom-input" id="custom-flag-name" name="todo-flag-label" type="text" maxLength={40} placeholder="Название флага" autoComplete="off" autoCorrect="off" spellCheck="false" value={newFlagName} onChange={(event) => { setNewFlagName(event.target.value); setSelectedFlagId(null); }} />{newFlagName.trim() && <button className="flag-picker__create-button" type="button" aria-label="Создать флаг" title="Создать флаг" disabled={creatingFlag} onClick={createFlagForNewList}><PlusIcon /></button>}</div>
+                      </div>
+                    </details>
+
+                    <div className="list-creator__date"><ListDatePicker value={listDate} open={datePickerOpen} onOpenChange={setDatePickerOpen} onChange={setListDate} /></div>
+                    </div>
+
+                    <div className="list-theme-picker" role="group" aria-label="Цвет темы списка">
+                      {listThemes.map(([value, label]) => (
+                        <button className={`list-theme-swatch${selectedTheme === value ? ' is-selected' : ''}`} type="button" data-list-theme={value} aria-label={label} aria-pressed={selectedTheme === value} key={value} onClick={() => setSelectedTheme(value)} />
+                      ))}
+                    </div>
+
+                    <button className="list-option-button list-creator__more" type="button" aria-label={moreListOptionsOpen ? 'Скрыть дополнительные настройки списка' : 'Показать флаг, описание и дату'} aria-expanded={moreListOptionsOpen} onClick={() => { setMoreListOptionsOpen((current) => !current); setFlagPickerOpen(false); setDatePickerOpen(false); }}><PlusIcon /></button>
+
+                  </div>
+                  {feedback && <p className="list-creator__feedback" role="alert">{feedback}</p>}
+                </div>
+                )}
+              </form> : <WorkspaceNoteCreator boardId={board!.id} title={name} onTitleChange={setName} flags={flags} csrfToken={csrfToken} isSaving={noteSaving} onSavingChange={setNoteSaving} onImageError={(message: string) => setWorkspaceNotice(`Заметка создана, изображение не прикреплено: ${message}`)} onCreated={(note: Note) => { if (String(activeBoardId.current) === String(note.board_id)) setNotes((current) => [note, ...current]); }} onFlagCreated={addCreatedFlag} />}
+            </div>
+          </section>}
+
+          <section className="workspace-lists" aria-label="Списки и заметки">
+            {searchQuery.trim() ? <div className="workspace-search-results" aria-live="polite">
+              {searchLoading && <p className="workspace-search-results__message">Ищем по доскам…</p>}
+              {searchError && <p className="workspace-search-results__message is-error" role="alert">{searchError}</p>}
+              {!searchLoading && !searchError && searchResults?.length === 0 && <p className="workspace-search-results__message">Совпадений не найдено</p>}
+              {searchResults?.map((result) => <div className="workspace-search-result" data-theme={result.theme} key={`${result.board_id}:${result.id}`}>
+                <p className="workspace-search-result__board">{result.board_name}</p>
+                <ListCard list={result} tasks={result.tasks} flags={result.flags} csrfToken={csrfToken} onChange={() => refreshSearchResults().catch((error) => setSearchError((error as Error).message))} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} />
+              </div>)}
+            </div> : <ListGrid key={`${board!.id}:${filter}`} lists={visibleLists} notes={visibleNotes} renderNote={(note, dragHandle, isFullscreen = false) => <WorkspaceNoteCard note={note} flags={flags} onSave={saveNote} onTogglePin={toggleNotePinned} onDrag={dragHandle} isFullscreen={isFullscreen} />} onSwap={reorderWorkspaceCards} onMoveTask={moveTask}>
+              {(list, dragHandle, isFullscreen = false) => <ListCard list={list} flags={flags} tasks={tasksByList.get(list.id) || []} csrfToken={csrfToken} onChange={() => refreshBoardData(board!.id)} onDeleted={removeListFromView} onFlagCreated={addCreatedFlag} onTogglePin={toggleListPinned} dragHandle={dragHandle} isFullscreen={isFullscreen} />}
+            </ListGrid>}
+          </section>
+          </>}
+        </main>
+      </div>
+
+      <footer className="workspace-footer">
+        <span className="workspace-footer__brand"><img className="workspace-footer__logo" src={brandLogo} alt="To Do Inn!" /><span aria-hidden="true">·</span> Пространство для важных дел</span>
+        <a href="https://github.com/Daniar-cmd/To-Do-Inn" target="_blank" rel="noreferrer">О проекте</a>
+      </footer>
+      {(boardFormOpen || boardSettingsOpen) && <div className="board-form-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creatingBoard) { setBoardFormOpen(false); setBoardSettingsOpen(false); } }}>
+        <section className="board-form-dialog" role="dialog" aria-modal="true" aria-labelledby="board-form-title">
+          <header className="board-form-dialog__header"><h2 id="board-form-title">{boardSettingsOpen ? 'Настройки доски' : 'Новая доска'}</h2><button type="button" aria-label="Закрыть форму" onClick={() => { setBoardFormOpen(false); setBoardSettingsOpen(false); }} disabled={creatingBoard}>×</button></header>
+          <form onSubmit={boardSettingsOpen ? handleUpdateBoard : handleCreateBoard}>
+            <label className="board-form-dialog__field"><span>Название доски <b aria-hidden="true">*</b></span><input autoFocus required maxLength={60} value={boardName} onChange={(event) => setBoardName(event.target.value)} placeholder="Например, Домашние дела" /></label>
+            <label className="board-form-dialog__field"><span>Описание <small>необязательно</small></span><textarea maxLength={2000} value={boardDescription} onChange={(event) => setBoardDescription(event.target.value)} placeholder="Кратко опишите назначение доски" /></label>
+            <fieldset className="board-form-dialog__types type-choice-grid"><legend>Для кого эта доска?</legend>
+              {[
+                ['personal', 'Личный'],
+                ['community', 'Для команды'],
+                ...(manageableCorporateAccounts.length > 0 && (!boardSettingsOpen || Boolean(boards.find((item) => item.id === editingBoardId)?.corporate_account_id)) ? [['corporate', 'Организации']] : []),
+              ].map(([value, label]) => <label className={`board-form-dialog__type type-choice${boardType === value ? ' is-selected' : ''}`} key={value}>
+                <input type="radio" name="board-type" value={value} checked={boardType === value} onChange={(event) => { setBoardType(event.target.value); if (event.target.value === 'corporate' && !boardCorporateAccountId) setBoardCorporateAccountId(String(manageableCorporateAccounts[0]?.id || '')); }} />
+                <BoardTypeIcon type={value} />
+                <span>{label}</span>
+              </label>)}
+            </fieldset>
+            {boardType === 'corporate' && <label className="board-form-dialog__field"><span>Организация</span><select value={boardCorporateAccountId || String(manageableCorporateAccounts[0]?.id || '')} onChange={(event) => setBoardCorporateAccountId(event.target.value)} required>{manageableCorporateAccounts.map((organization) => <option value={organization.id} key={organization.id}>{organization.name}</option>)}</select></label>}
+            {boardFormError && <p className="board-form-dialog__error" role="alert">{boardFormError}</p>}
+            {boardSettingsOpen && <><button className="board-form-dialog__delete" type="button" onClick={() => { setBoardDeleteError(''); setBoardDeleteTarget(boards.find((item) => item.id === editingBoardId) ?? null); }} disabled={creatingBoard || boards.length <= 1}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-.9 14H5.9L5 6m4 4v6m6-6v6" /></svg><span>Удалить доску</span></button>{boards.length <= 1 && <small className="board-form-dialog__delete-note">Нельзя удалить последнюю доску аккаунта.</small>}</>}
+            <div className="board-form-dialog__actions"><button type="button" onClick={() => { setBoardFormOpen(false); setBoardSettingsOpen(false); }} disabled={creatingBoard}>Отмена</button><button type="submit" disabled={creatingBoard}>{creatingBoard ? (boardSettingsOpen ? 'Сохраняем…' : 'Создаём…') : (boardSettingsOpen ? 'Сохранить изменения' : 'Создать доску')}</button></div>
+          </form>
+        </section>
+      </div>}
+      {inviteDialogOpen && <div className="board-form-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !inviting) setInviteDialogOpen(false); }}>
+        <section className="board-form-dialog" role="dialog" aria-modal="true" aria-labelledby="invite-member-title">
+          <header className="board-form-dialog__header"><h2 id="invite-member-title">Пригласить участника</h2><button type="button" aria-label="Закрыть форму" onClick={() => setInviteDialogOpen(false)} disabled={inviting}>×</button></header>
+          <form onSubmit={handleInviteMember}>
+            {manageableCorporateAccounts.length > 1 && <label className="board-form-dialog__field"><span>Организация</span><select value={inviteAccountId} onChange={(event) => setInviteAccountId(event.target.value)}>{manageableCorporateAccounts.map((organization) => <option value={organization.id} key={organization.id}>{organization.name}</option>)}</select></label>}
+            <label className="board-form-dialog__field"><span>Логин или e-mail</span><input autoFocus required maxLength={254} value={inviteIdentifier} onChange={(event) => setInviteIdentifier(event.target.value)} placeholder="@username или name@example.com" /></label>
+            <label className="board-form-dialog__field"><span>Роль</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="admin">admin</option><option value="manager">manager</option><option value="support">support</option></select></label>
+            {inviteMessage && <p className="board-form-dialog__error" role="status">{inviteMessage}</p>}
+            <div className="board-form-dialog__actions"><button type="button" onClick={() => setInviteDialogOpen(false)} disabled={inviting}>Закрыть</button><button type="submit" disabled={inviting}>{inviting ? 'Отправляем…' : 'Отправить приглашение'}</button></div>
+          </form>
+        </section>
+      </div>}
+      {boardDeleteTarget && <div className="board-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingBoard) setBoardDeleteTarget(null); }}>
+        <section className="board-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="board-delete-title">
+          <h2 id="board-delete-title">Удалить доску?</h2>
+          <p>Доска «{boardDeleteTarget.name}», все её списки и задачи будут удалены без возможности восстановления.</p>
+          {boardDeleteError && <p className="board-delete-dialog__error" role="alert">{boardDeleteError}</p>}
+          <div className="board-delete-dialog__actions"><button type="button" onClick={() => setBoardDeleteTarget(null)} disabled={deletingBoard}>Отмена</button><button type="button" onClick={handleDeleteBoard} disabled={deletingBoard}>{deletingBoard ? 'Удаляем…' : 'Удалить доску'}</button></div>
+        </section>
+      </div>}
+      {profileSettingsOpen && <div className="profile-settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !profileSaving) setProfileSettingsOpen(false); }}>
+        <section className="profile-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
+          <header className="profile-settings-dialog__header"><div><p>АККАУНТ</p><h2 id="profile-settings-title">Настройки профиля</h2></div><button type="button" aria-label="Закрыть настройки" onClick={() => setProfileSettingsOpen(false)} disabled={profileSaving}>×</button></header>
+          {!profileDraft && !profileError && <p className="profile-settings-dialog__loading" role="status">Загружаем настройки…</p>}
+          {profileError && !profileDraft && <p className="profile-settings-dialog__error" role="alert">{profileError}</p>}
+          {profileDraft && <form onSubmit={saveProfileSettings}>
+            <section className="profile-settings-dialog__avatar-section" aria-label="Аватар профиля">
+              <span className="profile-settings-dialog__avatar">{profileDraft.avatar ? <img src={profileDraft.avatar} alt="Аватар профиля" /> : <UserIcon />}</span>
+              <div><strong>Фото профиля</strong><p>JPEG, PNG или WebP, до 1 МБ</p><div className="profile-settings-dialog__avatar-actions"><label className="profile-settings-dialog__file-button">{profileDraft.avatar ? 'Изменить фото' : 'Загрузить фото'}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarFile} /></label>{profileDraft.avatar && <button type="button" onClick={() => { setProfileDraft((current) => current ? ({ ...current, avatar: null }) : current); setAvatarChanged(true); }}>Удалить</button>}</div></div>
+            </section>
+            <label className="profile-settings-dialog__field"><span>Логин</span><input value={profileDraft.username} disabled title="Изменение логина временно недоступно" /><small>Логин также используется для входа.</small></label>
+            <div className="profile-settings-dialog__two-columns">
+              <label className="profile-settings-dialog__field"><span>Основная почта</span><input type="email" maxLength={254} autoComplete="email" value={profileDraft.email} disabled title="Изменение почты временно недоступно" placeholder="name@example.com" /></label>
+              <label className="profile-settings-dialog__field"><span>Дополнительная почта</span><input type="email" maxLength={254} autoComplete="email" value={profileDraft.secondary_email} disabled title="Изменение почты временно недоступно" placeholder="name@example.com" /></label>
+            </div>
+            <label className="profile-settings-dialog__field"><span>О себе</span><textarea maxLength={1200} value={profileDraft.about} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, about: event.target.value }) : current)} placeholder="Расскажите немного о себе" /></label>
+            <label className="profile-settings-dialog__field"><span>GitHub</span><span className="profile-settings-social"><svg className="is-github" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.56.1.76-.24.76-.54v-2.08c-3.1.67-3.76-1.32-3.76-1.32-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.68.08-.68 1.12.08 1.71 1.15 1.71 1.15 1 1.7 2.61 1.21 3.25.93.1-.72.39-1.21.71-1.49-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .94-.3 3.06 1.15a10.6 10.6 0 0 1 5.57 0c2.12-1.45 3.05-1.15 3.05-1.15.61 1.54.23 2.68.12 2.96.71.78 1.14 1.78 1.14 3.01 0 4.29-2.62 5.23-5.11 5.5.4.35.75 1.03.75 2.08v3.09c0 .3.2.65.77.54A11.1 11.1 0 0 0 12 .9Z"/></svg><input type="url" maxLength={255} value={profileDraft.github_url} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, github_url: event.target.value }) : current)} placeholder="https://github.com/username" /></span></label>
+            <label className="profile-settings-dialog__field"><span>Telegram</span><span className="profile-settings-social"><svg className="is-telegram" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.7 3.3 18.5 20c-.24 1.18-.87 1.47-1.76.91l-4.86-3.58-2.35 2.26c-.26.26-.48.48-.98.48l.35-4.94 8.99-8.12c.39-.35-.08-.55-.6-.2L6.17 13.87l-4.8-1.5c-1.04-.33-1.06-1.04.22-1.55L20.38 3.1c.86-.32 1.61.2 1.33.2Z"/></svg><input type="url" maxLength={255} value={profileDraft.telegram_url} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, telegram_url: event.target.value }) : current)} placeholder="https://t.me/username" /></span></label>
+            <label className="profile-settings-dialog__field"><span>Тема по умолчанию</span><select value={profileDraft.preferred_theme} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, preferred_theme: event.target.value }) : current)}><option value="light">Светлая</option><option value="dark">Тёмная</option><option value="system">Как в системе</option></select></label>
+            <details className="profile-settings-dialog__password"><summary>Изменить пароль</summary><div className="profile-settings-dialog__password-fields"><p>После смены пароля потребуется войти заново на всех устройствах.</p><label className="profile-settings-dialog__field"><span>Текущий пароль</span><input type="password" autoComplete="current-password" value={profileDraft.current_password} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, current_password: event.target.value }) : current)} /></label><div className="profile-settings-dialog__two-columns"><label className="profile-settings-dialog__field"><span>Новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.new_password} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, new_password: event.target.value }) : current)} /></label><label className="profile-settings-dialog__field"><span>Повторите новый пароль</span><input type="password" autoComplete="new-password" value={profileDraft.confirm_password} onChange={(event) => setProfileDraft((current) => current ? ({ ...current, confirm_password: event.target.value }) : current)} /></label></div></div></details>
+            {profileError && <p className="profile-settings-dialog__error" role="alert">{profileError}</p>}
+            <div className="profile-settings-dialog__actions"><button type="button" onClick={() => setProfileSettingsOpen(false)} disabled={profileSaving}>Отмена</button><button type="submit" disabled={profileSaving}>{profileSaving ? 'Сохраняем…' : 'Сохранить настройки'}</button></div>
+          </form>}
+        </section>
+      </div>}
+    </div>
+  );
+}

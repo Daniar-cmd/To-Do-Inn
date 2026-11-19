@@ -18,13 +18,13 @@
 
 | Что | Источник | Как использовать |
 | --- | --- | --- |
-| Публичные React-блоки | `frontend/js/ui/index.js` | Импортировать именованный экспорт |
-| Иконки | `frontend/js/ui/icons.jsx` | Использовать готовую геометрию, без изменения штрихов |
-| Тексты интерфейса | `frontend/js/ui/text.js` | `uiText.actions.save`, `uiText.feedback.saving`, `uiText.task.showOptions` |
+| Публичные React-блоки | `frontend/js/ui/index.ts` | Импортировать именованный экспорт |
+| Иконки | `frontend/js/ui/icons.tsx` | Использовать готовую геометрию, без изменения штрихов |
+| Тексты интерфейса | `frontend/js/ui/text.ts` | `uiText.actions.save`, `uiText.feedback.saving`, `uiText.task.showOptions` |
 | Палитры, размеры, время анимаций | `frontend/scss/_variables.scss` | `@use 'variables' as v` |
 | Кнопки, карточки, состояния, анимации | `frontend/scss/workspace/` | Переиспользовать существующие классы; `_workspace.scss` подключает эти части по порядку |
 | Регистрация и CustomSelect | `frontend/scss/_auth.scss` | Сохранять существующий вариант регистрации |
-| Каталог примеров | `frontend/js/design-system/DesignSystem.jsx` | Только демонстрационное локальное состояние |
+| Каталог примеров | `frontend/js/design-system/DesignSystem.tsx` | Только демонстрационное локальное состояние |
 | Раскладка каталога | `frontend/scss/design-system.scss` | Только оформление страницы библиотеки |
 
 Общие иконки и часть текстов уже подключены к Workspace и диалогу. Ещё существующие inline SVG и строки не заменяем массово: при работе с конкретным блоком сначала ищем соответствующий элемент в библиотеке. Ответы API и серверная валидация остаются на backend.
@@ -53,8 +53,8 @@
 | Клавиатурный фокус | Общий `:focus-visible`, не заменять только hover-подсветкой |
 | Переключение режима создания | `.list-option-button.list-creator__mode-toggle`, `aria-pressed`; кнопка отделена от поля, а подпись меняется между списком и задачей |
 
-```jsx
-import { FlagIcon, uiText } from '../ui/index.js';
+```tsx
+import { FlagIcon, uiText } from '../ui/index.ts';
 
 <button
   type="button"
@@ -117,7 +117,7 @@ import { FlagIcon, uiText } from '../ui/index.js';
 ## Готовые React-блоки
 
 ```jsx
-import { ListDatePicker, ListDeleteDialog, CustomSelect } from '../ui/index.js';
+import { ListDatePicker, ListDeleteDialog, CustomSelect } from '../ui/index.ts';
 ```
 
 - `ListDatePicker`: управляемый календарь (`value`, `open`, `onOpenChange`, `onChange`), опционально дедлайн и повторение. Выбранная дата видна на кнопке как в создании списка. Проверяем поведение отдельно от каталога.
