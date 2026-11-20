@@ -10,6 +10,7 @@ import keyIcon from './icons/key.svg';
 export function RegisterPage() {
   const { csrfToken, connectionError } = useCsrfToken();
   const upgradeMode = new URLSearchParams(window.location.search).get('upgrade') === '1';
+  const registrationPaused = !upgradeMode;
   const [form, setForm] = useState({ username: '', firstName: '', lastName: '', middleName: '', organizationType: 'ООО', organizationName: '', password: '', confirmation: '', email: '', accountType: 'individual', avatar: null as string | null, about: '', secondaryEmail: '', githubUrl: '', telegramUrl: '', preferredTheme: 'system', personalDataConsent: false, marketingConsent: false });
   const [identityStep, setIdentityStep] = useState('email');
   const [emailCode, setEmailCode] = useState('');
@@ -531,8 +532,10 @@ export function RegisterPage() {
 
   return (
     <AuthLayout wide={identityStep === 'corporate-admin' || identityStep === 'finish'} corporateAdmin={identityStep === 'corporate-admin'}>
-      <AuthHeader eyebrow={upgradeMode ? 'ОБНОВЛЕНИЕ АККАУНТА' : registrationMotivation[0]} title={upgradeMode ? 'Обновите данные' : registrationTitle} progress={registrationProgress}>
-        {upgradeMode
+      <AuthHeader eyebrow={registrationPaused ? 'РЕГИСТРАЦИЯ' : upgradeMode ? 'ОБНОВЛЕНИЕ АККАУНТА' : registrationMotivation[0]} title={registrationPaused ? 'Регистрация временно закрыта' : upgradeMode ? 'Обновите данные' : registrationTitle} progress={registrationPaused ? undefined : registrationProgress}>
+        {registrationPaused
+          ? 'Новые аккаунты пока нельзя создать.'
+          : upgradeMode
           ? <>Подтвердите почту и задайте новый логин и пароль. Ваши доски, списки и задачи останутся на месте.{form.accountType === 'corporate' && ' Корпоративный аккаунт будет создан отдельно, без переноса старых досок.'}</>
           : registrationMotivation[1]}
       </AuthHeader>
@@ -541,16 +544,17 @@ export function RegisterPage() {
           <div className={`register-identity__step register-identity__step--email${identityStep === 'email' ? ' is-active' : ''}`} aria-hidden={identityStep !== 'email'} inert={identityStep !== 'email'}>
             <div className="auth-form__field">
               <label htmlFor="email">{upgradeMode ? 'Новая электронная почта' : 'Электронная почта'}</label>
-              <input id="email" name="email" type="email" autoComplete="email" placeholder="name@example.com" value={form.email} aria-invalid={Boolean(feedback.email || emailInUse)} onChange={(event) => updateField('email', event.target.value)} onKeyDown={(event) => {
+              <input id="email" name="email" type="email" autoComplete="email" placeholder="name@example.com" value={form.email} disabled={registrationPaused} aria-invalid={Boolean(feedback.email || emailInUse)} onChange={(event) => updateField('email', event.target.value)} onKeyDown={(event) => {
                 if (event.key !== 'Enter') return;
                 event.preventDefault();
                 requestEmailCode();
               }} required />
+              {registrationPaused && <p className="register-email-warning is-error" role="alert">Регистрация новых пользователей временно приостановлена.</p>}
               {feedback.email && <p className="auth-form__feedback is-invalid">{feedback.email}</p>}
               {emailAccountNotice && <p className={`register-email-warning${existingEmailAccounts.length > 1 ? ' is-error' : ''}`} role={existingEmailAccounts.length > 1 ? 'alert' : 'status'}>{emailAccountNotice}</p>}
               {emailInUse && <div className="register-email-taken" role="status"><p>Этот e-mail уже зарегистрирован.</p><a href="/">Войти</a><a href="/pages/forgot-password.html">Восстановить пароль</a></div>}
-              <p className="register-enter-hint">Нажмите Enter, чтобы продолжить</p>
-              {form.email && <button className="register-step-next" type="button" onClick={requestEmailCode} disabled={sendingEmailCode || existingEmailAccounts.length > 1}>{sendingEmailCode ? 'Отправляем…' : 'Далее'}</button>}
+              {!registrationPaused && <p className="register-enter-hint">Нажмите Enter, чтобы продолжить</p>}
+              {!registrationPaused && form.email && <button className="register-step-next" type="button" onClick={requestEmailCode} disabled={sendingEmailCode || existingEmailAccounts.length > 1}>{sendingEmailCode ? 'Отправляем…' : 'Далее'}</button>}
             </div>
           </div>
           <div className={`register-identity__step register-identity__step--email-code${identityStep === 'email-code' ? ' is-active' : ''}`} aria-hidden={identityStep !== 'email-code'} inert={identityStep !== 'email-code'}>

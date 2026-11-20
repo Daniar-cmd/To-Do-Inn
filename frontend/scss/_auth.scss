@@ -567,6 +567,7 @@
 
 .register-email-taken { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 14px; padding: 11px 12px; border: 1px solid #d8e4f2; border-radius: 9px; background: #f4f8fe; color: v.$navy; font-size: .8rem; p { flex-basis: 100%; margin: 0; } a { display: inline-block; color: v.$blue; font-weight: 650; text-decoration: none; transition: color 140ms ease, transform 140ms ease; &:hover { transform: translateY(-1px); color: v.$blue-hover; } } }
 .register-email-warning { margin: 0; padding: 10px 12px; border: 1px solid #edcf83; border-radius: 9px; background: #fff8e6; color: #74551a; font-size: .78rem; line-height: 1.5; &.is-error { border-color: #f0aaa5; background: #fff0ef; color: #a1261d; } }
+.register-identity__step--email input:disabled { background: #f4f7fb; color: v.$muted; cursor: not-allowed; opacity: .75; }
 
 .register-email-success { display: flex; min-height: 100px; align-items: center; gap: 16px; padding: 18px 20px; border: 1px solid #cce8d5; border-radius: 12px; background: #f0faf3; color: #205b37; animation: registration-success-in 380ms cubic-bezier(.2, .8, .2, 1) both; > span { display: grid; width: 44px; height: 44px; flex: none; place-items: center; border-radius: 50%; background: #d7f1df; color: #237044; font-size: 25px; font-weight: 700; } strong { display: block; font-size: .98rem; } p { margin: 4px 0 0; color: #52745e; font-size: .82rem; } }
 

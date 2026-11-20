@@ -19,6 +19,7 @@
     <php>
         <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_DEBUG" value="true" force="true"/>
+        <env name="REGISTRATION_ENABLED" value="true" force="true"/>
         <!-- Public test-only key. Never used outside PHPUnit. -->
         <env name="APP_KEY" value="base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" force="true"/>
         <env name="DB_HOST" value="127.0.0.1" force="true"/>

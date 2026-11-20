@@ -57,8 +57,10 @@ class AuthController
         }
 
         return match ($action) {
-            'send_verification_code' => $this->sendVerificationCode($request, $input),
-            'verify_email_code' => $this->verifyEmailCode($request, $input),
+            'send_verification_code' => $this->registrationOpen()
+                ? $this->sendVerificationCode($request, $input) : $this->registrationClosed(),
+            'verify_email_code' => $this->registrationOpen()
+                ? $this->verifyEmailCode($request, $input) : $this->registrationClosed(),
             'check_registration_email' => $this->checkRegistrationEmail($input),
             'check_login_email' => $this->checkLoginEmail($input),
             'request_password_reset' => $this->requestPasswordReset($input),
@@ -70,11 +72,23 @@ class AuthController
             'validate_corporate_admin_identifier' => $this->validateCorporateAdminIdentifier($input),
             'validate_registration_username' => $this->validateRegistrationUsername($input),
             'validate_registration_email' => $this->validateRegistrationEmail($input),
-            'register' => $this->register($request, $input),
+            'register' => $this->registrationOpen()
+                ? $this->register($request, $input) : $this->registrationClosed(),
             'login' => $this->login($request, $input),
             'logout' => $this->logout($request),
             default => $this->error(400, 'Unknown action'),
         };
+    }
+
+    private function registrationOpen(): bool
+    {
+        // Existing legacy users may still complete their account upgrade while new sign-ups are paused.
+        return (bool) config('auth.registration_enabled') || $this->legacyUpgradeUser() !== null;
+    }
+
+    private function registrationClosed(): JsonResponse
+    {
+        return $this->error(503, 'Регистрация временно приостановлена. Попробуйте позже.');
     }
 
     private function sendVerificationCode(Request $request, #[\SensitiveParameter] array $input): JsonResponse
