@@ -3,6 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Mail\CorporateAccountInvitation;
+use App\Support\WorkspaceBridge;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -10,7 +13,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
@@ -25,6 +27,78 @@ class WorkspaceController
         try {
             if ($request->isMethod('GET')) {
                 return $this->read($request, $userId);
+            }
+
+            $action = $request->isMethod('POST') ? $request->json('action') : null;
+            if (($action === 'toggle_task' && config('workspace_bridge.toggle_task'))
+                || ($action === 'update_task' && config('workspace_bridge.update_task'))
+                || ($action === 'create_task' && config('workspace_bridge.create_task'))
+                || ($action === 'move_task' && config('workspace_bridge.move_task'))
+                || ($action === 'reorder_task' && config('workspace_bridge.reorder_task'))
+                || ($action === 'delete_task' && config('workspace_bridge.delete_task'))
+                || ($action === 'stop_task_repeat' && config('workspace_bridge.stop_task_repeat'))) {
+                $input = $request->json()->all();
+                $taskId = $this->id($input[$action === 'create_task' ? 'list_id' : 'task_id'] ?? null);
+                if ($action === 'toggle_task' && ($taskId === false || !is_bool($input['is_completed'] ?? null))) {
+                    $this->fail(422, 'Некорректная задача.');
+                }
+                if (($action === 'update_task' || $action === 'create_task') && ($taskId === false || !is_string($input['title'] ?? null)
+                    || trim($input['title']) === '' || mb_strlen(trim($input['title'])) > 240)) {
+                    $this->fail(422, $action === 'create_task' ? 'Введите название задачи (не более 240 символов).'
+                        : 'Название задачи должно содержать от 1 до 240 символов.');
+                }
+                $targetListId = $action === 'move_task' ? $this->id($input['target_list_id'] ?? null) : null;
+                $targetTaskId = in_array($action, ['move_task', 'reorder_task'], true) && ($input['target_task_id'] ?? null) !== null
+                    ? $this->id($input['target_task_id']) : null;
+                if (in_array($action, ['move_task', 'reorder_task'], true)
+                    && ($taskId === false || ($action === 'move_task' && $targetListId === false)
+                        || ($action === 'reorder_task' && $targetTaskId === null)
+                        || $targetTaskId === false)) {
+                    $this->fail(422, 'Некорректная задача.');
+                }
+                if (in_array($action, ['delete_task', 'stop_task_repeat'], true) && $taskId === false) {
+                    $this->fail(422, 'Некорректная задача.');
+                }
+                try {
+                    return DB::transaction(function () use ($userId, $taskId, $input, $action, $targetListId, $targetTaskId): JsonResponse {
+                        // Keep workspace writes serialized while allowing .NET inserts to take FK key-share locks.
+                        if (!DB::table('users')->where('id', $userId)->lock('FOR NO KEY UPDATE')->first(['id'])) {
+                            $this->fail(401, 'Требуется войти в аккаунт.');
+                        }
+                        if (in_array($action, ['delete_task', 'stop_task_repeat'], true)) {
+                            $task = DB::table('tasks')->where('id', $taskId)->first(['list_id', 'user_id']);
+                            $list = $task === null ? null : DB::table('task_lists')->where('id', $task->list_id)
+                                ->where('user_id', $task->user_id)->first(['board_id']);
+                            $board = $list === null ? null : $this->accessibleBoard((int) $list->board_id, $userId);
+                            if ($task === null || $board === null || (int) $task->user_id !== (int) $board->user_id) {
+                                $this->fail(404, 'Задача не найдена.');
+                            }
+                            if ((int) $board->user_id !== $userId) {
+                                DB::table('users')->where('id', $board->user_id)->lock('FOR NO KEY UPDATE')->first(['id']);
+                            }
+                        }
+                        $bridge = app(WorkspaceBridge::class);
+                        return match ($action) {
+                            'toggle_task' => $bridge->toggleTask($userId, ['action' => $action, 'task_id' => $taskId,
+                                'is_completed' => $input['is_completed']]),
+                            'update_task' => $bridge->updateTask($userId, ['action' => $action, 'task_id' => $taskId,
+                                'title' => trim($input['title'])]),
+                            'create_task' => $bridge->createTask($userId, array_replace($input,
+                                ['list_id' => $taskId, 'title' => trim($input['title'])])),
+                            'move_task' => $bridge->moveTask($userId, ['action' => $action, 'task_id' => $taskId,
+                                'target_list_id' => $targetListId, 'target_task_id' => $targetTaskId]),
+                            'reorder_task' => $bridge->reorderTask($userId, ['action' => $action, 'task_id' => $taskId,
+                                'target_task_id' => $targetTaskId]),
+                            'delete_task' => $bridge->deleteTask($userId, ['action' => $action, 'task_id' => $taskId]),
+                            'stop_task_repeat' => $bridge->stopTaskRepeat($userId, ['action' => $action, 'task_id' => $taskId]),
+                        };
+                    });
+                } catch (HttpResponseException $exception) {
+                    throw $exception;
+                } catch (Throwable $exception) {
+                    Log::error('Workspace bridge task operation failed', ['action' => $action, 'exception' => $exception]);
+                    return response()->json(['success' => false, 'error' => 'Сервис задач временно недоступен.'], 503);
+                }
             }
 
             return DB::transaction(function () use ($request, $userId): JsonResponse {

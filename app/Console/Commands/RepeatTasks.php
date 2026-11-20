@@ -2,9 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Support\WorkspaceBridge;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class RepeatTasks extends Command
 {
@@ -14,6 +17,8 @@ class RepeatTasks extends Command
 
     public function handle(): int
     {
+        if (config('workspace_bridge.repeat_tasks')) return $this->runBridge();
+
         $today = today()->toDateString();
         $series = DB::table('tasks')->whereNotNull('repeat_interval')->whereNotNull('repeat_series_id')
             ->select('user_id', 'repeat_series_id')->distinct()->get();
@@ -59,6 +64,30 @@ class RepeatTasks extends Command
                     $latest = DB::table('tasks')->where('id', $id)->first();
                 }
             });
+        }
+
+        return self::SUCCESS;
+    }
+
+    private function runBridge(): int
+    {
+        $today = today()->toDateString();
+        $series = DB::table('tasks')->whereNotNull('repeat_interval')->whereNotNull('repeat_series_id')
+            ->select('user_id', 'repeat_series_id')->distinct()->get();
+
+        foreach ($series as $item) {
+            try {
+                DB::transaction(function () use ($item, $today): void {
+                    // Serialize owner writes without blocking .NET's FK key-share lock during INSERT.
+                    if (!DB::table('users')->where('id', $item->user_id)->lock('FOR NO KEY UPDATE')->exists()) return;
+                    app(WorkspaceBridge::class)->repeatSeries((int) $item->user_id,
+                        (string) $item->repeat_series_id, $today);
+                });
+            } catch (Throwable $exception) {
+                Log::error('Workspace repeat bridge failed', ['exception' => $exception]);
+                $this->error('Не удалось создать повторяющиеся задачи.');
+                return self::FAILURE;
+            }
         }
 
         return self::SUCCESS;

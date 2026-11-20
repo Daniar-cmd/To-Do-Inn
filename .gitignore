@@ -12,9 +12,15 @@ dist/
 .vscode/
 .opencode/
 AGENTS.md 
-/docs
+/docs/*
 
 !/docs/corporate-accounts.md
 !/docs/security-performance-audit.md
 
 !/docs/design-system.md
+!/docs/architecture.md
+!/docs/csharp-aspnet-migration.md
+
+# Local ASP.NET Core build output
+/backend/**/bin/
+/backend/**/obj/

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Support\WorkspaceBridge;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -42,6 +43,192 @@ class WorkspaceTest extends DatabaseTestCase
             'corporate_accounts' => [],
             'flags' => [], 'lists' => [], 'notes' => [], 'tasks' => [],
         ]])->assertHeader('Cache-Control', 'no-store, private')->assertHeader('X-Content-Type-Options', 'nosniff');
+    }
+
+    public function test_toggle_task_can_delegate_to_bridge_without_using_php_write_path(): void
+    {
+        config()->set('workspace_bridge.toggle_task', true);
+        $list = $this->list($this->user->id, $this->board, 'Bridge list');
+        $task = $this->task($this->user->id, $list, 'Bridge task');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('toggleTask')
+            ->with($this->user->id, ['action' => 'toggle_task', 'task_id' => $task, 'is_completed' => true])
+            ->willReturn(response()->json(['success' => true, 'data' => ['updated' => true]]));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'toggle_task', 'task_id' => $task, 'is_completed' => true])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['updated' => true]]);
+        $this->assertDatabaseHas('tasks', ['id' => $task, 'is_completed' => false]);
+    }
+
+    public function test_toggle_task_bridge_failure_does_not_write_through_php(): void
+    {
+        config()->set('workspace_bridge.toggle_task', true);
+        $list = $this->list($this->user->id, $this->board, 'Bridge failure list');
+        $task = $this->task($this->user->id, $list, 'Bridge failure task');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('toggleTask')->willThrowException(new RuntimeException('bridge unavailable'));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'toggle_task', 'task_id' => $task, 'is_completed' => true])
+            ->assertStatus(503)->assertJsonPath('success', false);
+        $this->assertDatabaseHas('tasks', ['id' => $task, 'is_completed' => false]);
+    }
+
+    public function test_update_task_bridge_receives_trimmed_title_without_php_write(): void
+    {
+        config()->set('workspace_bridge.update_task', true);
+        $list = $this->list($this->user->id, $this->board, 'Rename bridge list');
+        $task = $this->task($this->user->id, $list, 'Original title');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('updateTask')
+            ->with($this->user->id, ['action' => 'update_task', 'task_id' => $task, 'title' => 'Новое имя'])
+            ->willReturn(response()->json(['success' => true, 'data' => ['updated' => true]]));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'update_task', 'task_id' => $task, 'title' => ' Новое имя '])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['updated' => true]]);
+        $this->assertDatabaseHas('tasks', ['id' => $task, 'title' => 'Original title']);
+        $this->postWorkspace(['action' => 'update_task', 'task_id' => $task, 'title' => '   '])
+            ->assertUnprocessable()->assertJsonPath('error', 'Название задачи должно содержать от 1 до 240 символов.');
+    }
+
+    public function test_create_task_bridge_receives_checked_id_and_title_without_php_write(): void
+    {
+        config()->set('workspace_bridge.create_task', true);
+        $list = $this->list($this->user->id, $this->board, 'Create bridge list');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('createTask')
+            ->with($this->user->id, ['action' => 'create_task', 'list_id' => $list,
+                'title' => 'Новая задача', 'urgency' => 2])
+            ->willReturn(response()->json(['success' => true, 'data' => ['task' => ['id' => 123]]], 201));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => (string) $list,
+            'title' => ' Новая задача ', 'urgency' => 2])->assertCreated()
+            ->assertJsonPath('data.task.id', 123);
+        $this->assertDatabaseMissing('tasks', ['list_id' => $list, 'title' => 'Новая задача']);
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => ' '])
+            ->assertUnprocessable()->assertJsonPath('error', 'Введите название задачи (не более 240 символов).');
+    }
+
+    public function test_create_task_bridge_failure_does_not_fall_back_to_php(): void
+    {
+        config()->set('workspace_bridge.create_task', true);
+        $list = $this->list($this->user->id, $this->board, 'Create bridge failure list');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('createTask')->willThrowException(new RuntimeException('bridge unavailable'));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'create_task', 'list_id' => $list, 'title' => 'Not inserted'])
+            ->assertStatus(503)->assertJsonPath('success', false);
+        $this->assertDatabaseMissing('tasks', ['list_id' => $list, 'title' => 'Not inserted']);
+    }
+
+    public function test_move_and_reorder_task_bridge_receive_normalized_ids_without_php_write(): void
+    {
+        config()->set('workspace_bridge.move_task', true);
+        config()->set('workspace_bridge.reorder_task', true);
+        $sourceList = $this->list($this->user->id, $this->board, 'Bridge source');
+        $targetList = $this->list($this->user->id, $this->board, 'Bridge target');
+        $source = $this->task($this->user->id, $sourceList, 'Source');
+        $target = $this->task($this->user->id, $sourceList, 'Target', 1);
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('moveTask')
+            ->with($this->user->id, ['action' => 'move_task', 'task_id' => $source,
+                'target_list_id' => $targetList, 'target_task_id' => null])
+            ->willReturn(response()->json(['success' => true, 'data' => ['updated' => true]]));
+        $bridge->expects($this->once())->method('reorderTask')
+            ->with($this->user->id, ['action' => 'reorder_task', 'task_id' => $source,
+                'target_task_id' => $target])
+            ->willReturn(response()->json(['success' => true, 'data' => ['updated' => true]]));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'move_task', 'task_id' => (string) $source,
+            'target_list_id' => (string) $targetList])->assertOk();
+        $this->postWorkspace(['action' => 'reorder_task', 'task_id' => (string) $source,
+            'target_task_id' => (string) $target])->assertOk();
+        $this->postWorkspace(['action' => 'move_task', 'task_id' => $source,
+            'target_list_id' => 0])->assertUnprocessable()->assertJsonPath('error', 'Некорректная задача.');
+        $this->assertSame([$source, $target], $this->taskOrder($sourceList));
+        $this->assertSame([], $this->taskOrder($targetList));
+    }
+
+    public function test_task_lifecycle_bridge_delegates_without_php_write(): void
+    {
+        config()->set('workspace_bridge.delete_task', true);
+        config()->set('workspace_bridge.stop_task_repeat', true);
+        $list = $this->list($this->user->id, $this->board, 'Lifecycle bridge list');
+        $task = $this->task($this->user->id, $list, 'Recurring task');
+        DB::table('tasks')->where('id', $task)->update([
+            'is_completed' => true, 'repeat_interval' => 'daily',
+            'repeat_series_id' => (string) \Illuminate\Support\Str::uuid(),
+            'repeat_anchor_date' => today()->toDateString(),
+        ]);
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('stopTaskRepeat')
+            ->with($this->user->id, ['action' => 'stop_task_repeat', 'task_id' => $task])
+            ->willReturn(response()->json(['success' => true, 'data' => ['updated' => true]]));
+        $bridge->expects($this->once())->method('deleteTask')
+            ->with($this->user->id, ['action' => 'delete_task', 'task_id' => $task])
+            ->willReturn(response()->json(['success' => true, 'data' => ['deleted' => true]]));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => (string) $task])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['updated' => true]]);
+        $this->postWorkspace(['action' => 'delete_task', 'task_id' => (string) $task])
+            ->assertOk()->assertExactJson(['success' => true, 'data' => ['deleted' => true]]);
+        $this->assertDatabaseHas('tasks', ['id' => $task, 'repeat_interval' => 'daily']);
+    }
+
+    public function test_task_lifecycle_bridge_rejects_foreign_task_before_call(): void
+    {
+        config()->set('workspace_bridge.delete_task', true);
+        config()->set('workspace_bridge.stop_task_repeat', true);
+        $foreignList = $this->list($this->other->id, $this->foreignBoard, 'Foreign lifecycle list');
+        $task = $this->task($this->other->id, $foreignList, 'Foreign lifecycle task');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->never())->method('deleteTask');
+        $bridge->expects($this->never())->method('stopTaskRepeat');
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->postWorkspace(['action' => 'delete_task', 'task_id' => $task])->assertNotFound();
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $task])->assertNotFound();
+        $this->assertDatabaseHas('tasks', ['id' => $task]);
+    }
+
+    public function test_stop_repeat_bridge_accepts_corporate_member_and_rejects_revoked_access(): void
+    {
+        config()->set('workspace_bridge.stop_task_repeat', true);
+        $account = DB::table('corporate_accounts')->insertGetId([
+            'root_username' => '@Bridge'.bin2hex(random_bytes(3)),
+            'root_email' => 'bridge-owner@example.com',
+            'root_password_hash' => 'not-used-in-this-test',
+            'organization_name' => 'Bridge Org',
+        ]);
+        foreach ([[$this->user, 'owner'], [$this->other, 'manager']] as [$member, $role]) {
+            DB::table('corporate_account_members')->insert([
+                'corporate_account_id' => $account, 'user_id' => $member->id,
+                'email' => $role.'-bridge@example.com', 'role' => $role, 'accepted_at' => now(),
+            ]);
+        }
+        $board = DB::table('boards')->insertGetId([
+            'user_id' => $this->user->id, 'corporate_account_id' => $account,
+            'name' => 'Bridge corporate board', 'board_type' => 'corporate',
+        ]);
+        $list = $this->list($this->user->id, $board, 'Bridge corporate list');
+        $task = $this->task($this->user->id, $list, 'Bridge corporate task');
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('stopTaskRepeat')
+            ->with($this->other->id, ['action' => 'stop_task_repeat', 'task_id' => $task])
+            ->willReturn(response()->json(['success' => true, 'data' => ['updated' => true]]));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        Auth::login($this->other);
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $task])->assertOk();
+        DB::table('corporate_account_members')->where('corporate_account_id', $account)
+            ->where('user_id', $this->other->id)->update(['accepted_at' => null]);
+        $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $task])->assertNotFound();
     }
 
     public function test_board_selection_is_owned_and_invalid_get_ids_fall_back_to_default(): void
@@ -349,6 +536,44 @@ class WorkspaceTest extends DatabaseTestCase
         $this->assertSame(3, DB::table('tasks')->where('list_id', $list)->count());
         $this->postWorkspace(['action' => 'stop_task_repeat', 'task_id' => $original])->assertStatus(409);
         $this->travelBack();
+    }
+
+    public function test_repeat_command_delegates_series_without_php_inserts_when_bridge_enabled(): void
+    {
+        config()->set('workspace_bridge.repeat_tasks', true);
+        $list = $this->list($this->user->id, $this->board, 'Bridge repeat list');
+        $task = $this->task($this->user->id, $list, 'Bridge repeat task');
+        $series = (string) \Illuminate\Support\Str::uuid();
+        DB::table('tasks')->where('id', $task)->update([
+            'due_date' => today()->toDateString(), 'repeat_interval' => 'daily',
+            'repeat_series_id' => $series, 'repeat_anchor_date' => today()->toDateString(),
+        ]);
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('repeatSeries')
+            ->with($this->user->id, $series, today()->toDateString())->willReturn(1);
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->assertSame(0, Artisan::call('tasks:repeat'));
+        $this->assertSame(1, DB::table('tasks')->where('repeat_series_id', $series)->count());
+    }
+
+    public function test_repeat_command_bridge_failure_does_not_fall_back_to_php(): void
+    {
+        config()->set('workspace_bridge.repeat_tasks', true);
+        $list = $this->list($this->user->id, $this->board, 'Bridge repeat failure list');
+        $task = $this->task($this->user->id, $list, 'Bridge repeat failure task');
+        $series = (string) \Illuminate\Support\Str::uuid();
+        DB::table('tasks')->where('id', $task)->update([
+            'due_date' => today()->toDateString(), 'repeat_interval' => 'daily',
+            'repeat_series_id' => $series, 'repeat_anchor_date' => today()->toDateString(),
+        ]);
+        $bridge = $this->createMock(WorkspaceBridge::class);
+        $bridge->expects($this->once())->method('repeatSeries')
+            ->willThrowException(new RuntimeException('bridge unavailable'));
+        $this->app->instance(WorkspaceBridge::class, $bridge);
+
+        $this->assertSame(1, Artisan::call('tasks:repeat'));
+        $this->assertSame(1, DB::table('tasks')->where('repeat_series_id', $series)->count());
     }
 
     public function test_repeating_deadlines_and_foreign_series_are_scoped_to_the_owner(): void
