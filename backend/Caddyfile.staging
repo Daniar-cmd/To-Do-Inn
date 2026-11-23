@@ -1,0 +1,30 @@
+{
+	admin off
+	skip_install_trust
+	auto_https disable_redirects
+}
+
+https://{$TODO_INN_STAGE_HOST:localhost}:{$TODO_INN_STAGE_PORT:8443} {
+	bind 127.0.0.1
+	tls internal
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:{$TODO_INN_API_PORT:8002}
+	}
+
+	@private path /health /ready /internal /internal/*
+	handle @private {
+		respond 404
+	}
+
+	handle /favicon.svg {
+		root * "{$TODO_INN_FAVICON_DIR}"
+		file_server
+	}
+
+	handle {
+		root * "{$TODO_INN_DIST_DIR}"
+		file_server
+	}
+}

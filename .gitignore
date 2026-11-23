@@ -14,7 +14,11 @@ dist/
 AGENTS.md 
 /docs
 
-!/docs/corporate-accounts.md
-!/docs/security-performance-audit.md
-
 !/docs/design-system.md
+!/docs/architecture.md
+
+# Local ASP.NET Core build output
+/backend/**/bin/
+/backend/**/obj/
+/tests/Workspace.Api.LocalSmoke/bin/
+/tests/Workspace.Api.LocalSmoke/obj/

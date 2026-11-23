@@ -1,0 +1,32 @@
+todo-inn.ru {
+	encode zstd gzip
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8002
+	}
+
+	@private path /health /ready /internal /internal/*
+	handle @private {
+		respond 404
+	}
+
+	handle /favicon.svg {
+		root * /opt/todo-inn/current/public
+		file_server
+	}
+
+	handle {
+		root * /opt/todo-inn/current/dist
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+todo-inn.online {
+	redir https://todo-inn.ru{uri} permanent
+}
+
+xn----gtbnuazhb.xn--p1ai {
+	redir https://todo-inn.ru{uri} permanent
+}

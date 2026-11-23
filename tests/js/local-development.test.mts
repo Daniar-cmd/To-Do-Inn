@@ -4,12 +4,12 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { loadConfigFromFile } from 'vite';
 
-test('the frontend uses Laravel, and production assets cannot overwrite the PHP document root', async () => {
+test('the frontend uses ASP.NET Core and writes production assets to dist', async () => {
   const loaded = await loadConfigFromFile({ command: 'serve', mode: 'development' });
   assert.ok(loaded);
   const config: any = loaded.config;
-  assert.equal(config.server.proxy['/api'], 'http://127.0.0.1:8001');
-  assert.equal(config.server.proxy['/favicon.svg'], 'http://127.0.0.1:8001');
+  assert.equal(config.server.proxy['/api'], 'http://127.0.0.1:8002');
+  assert.equal(config.server.proxy['/favicon.svg'], undefined);
   assert.equal(config.root, resolve('frontend'));
   assert.equal(config.build.outDir, resolve('dist'));
   assert.notEqual(config.build.outDir, config.root);
@@ -18,7 +18,8 @@ test('the frontend uses Laravel, and production assets cannot overwrite the PHP 
   assert.ok(!Object.values(config.build.rollupOptions.input).includes(resolve('frontend/pages/design-system.html')), 'the design catalog must stay out of production');
 });
 
-test('the documented API command selects the separate Laravel environment and loopback port', async () => {
+test('the local API command starts .NET and local checks run without PHP', async () => {
   const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.scripts['dev:api'], 'php artisan serve --env=laravel --no-reload --host=127.0.0.1 --port=8001');
+  assert.equal(pkg.scripts['dev:api'], 'node --import tsx backend/dev-api.mts');
+  assert.equal(pkg.scripts['test:local'], 'bash tests/dotnet-local-smoke.sh');
 });

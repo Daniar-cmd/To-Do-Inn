@@ -1,0 +1,55 @@
+name: todo-inn-local
+
+services:
+  db:
+    image: postgres:18
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1"]
+    environment:
+      POSTGRES_DB: todo_inn_docker_workspace
+      POSTGRES_USER: todo_inn_local
+      POSTGRES_PASSWORD: todo_inn_docker_only
+    ports:
+      - "127.0.0.1:5173:8080"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "todo_inn_local", "-d", "todo_inn_docker_workspace"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.local
+      target: api
+    network_mode: "service:db"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://127.0.0.1:8002
+      ConnectionStrings__Workspace: "Host=127.0.0.1;Database=todo_inn_docker_workspace;Username=todo_inn_local;Password=todo_inn_docker_only;GSS Encryption Mode=Disable"
+      AuthPreview__Enabled: "true"
+      AuthPreview__AllowLoopbackHttp: "true"
+      AuthPreview__SessionKeyDirectory: /app/keys
+      AuthPreview__UseLocalVerificationCode: "true"
+      Registration__Enabled: "${TODO_INN_DOCKER_REGISTRATION:-false}"
+      Mail__FrontendUrl: http://localhost:5173
+    volumes:
+      - session-keys:/app/keys
+
+  web:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.local
+      target: web
+    network_mode: "service:db"
+    depends_on:
+      - api
+
+volumes:
+  postgres:
+  session-keys:

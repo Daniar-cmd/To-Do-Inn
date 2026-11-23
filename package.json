@@ -4,11 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "vite --config vite.config.ts",
-    "dev:api": "php artisan serve --env=laravel --no-reload --host=127.0.0.1 --port=8001",
+    "dev:api": "node --import tsx backend/dev-api.mts",
     "dev:styles": "node --import tsx ./node_modules/gulp/bin/gulp.js --gulpfile gulpfile.ts dev",
     "build": "node --import tsx ./node_modules/gulp/bin/gulp.js --gulpfile gulpfile.ts build && vite build --config vite.config.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test:frontend": "node --import tsx --test tests/js/*.test.mts"
+    "test:frontend": "node --import tsx --test tests/js/*.test.mts",
+    "test:local": "bash tests/dotnet-local-smoke.sh"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

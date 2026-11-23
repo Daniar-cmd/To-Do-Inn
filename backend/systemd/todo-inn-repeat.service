@@ -1,0 +1,20 @@
+[Unit]
+Description=Generate To Do Inn recurring tasks
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=todo-inn
+Group=todo-inn
+WorkingDirectory=/opt/todo-inn/current/api
+Environment=DOTNET_ENVIRONMENT=Production
+EnvironmentFile=/etc/todo-inn/aspnet.env
+ExecStart=/opt/todo-inn/current/api/Workspace.Api tasks:repeat
+TimeoutStartSec=15min
+KillSignal=SIGINT
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
