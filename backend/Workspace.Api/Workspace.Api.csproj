@@ -5,6 +5,22 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Mail/verification-code.html" LogicalName="Mail.verification-code.html" />
+    <EmbeddedResource Include="Mail/verification-code.txt" LogicalName="Mail.verification-code.txt" />
+    <EmbeddedResource Include="Mail/corporate-invitation.html" LogicalName="Mail.corporate-invitation.html" />
+    <EmbeddedResource Include="Mail/corporate-invitation.txt" LogicalName="Mail.corporate-invitation.txt" />
+    <EmbeddedResource Include="Mail/password-reset.html" LogicalName="Mail.password-reset.html" />
+    <EmbeddedResource Include="Mail/password-reset.txt" LogicalName="Mail.password-reset.txt" />
+    <EmbeddedResource Include="../../logos/ToDo-Inn-logo-compact.png" LogicalName="Mail.logo.png" />
+    <EmbeddedResource Include="Migrations/baseline.catalog.sql" LogicalName="Migrations.baseline.catalog.sql" />
+    <EmbeddedResource Include="Migrations/baseline.json" LogicalName="Migrations.baseline.json" />
+    <EmbeddedResource Include="Migrations/initial-schema.sql" LogicalName="Migrations.initial-schema.sql" />
+    <EmbeddedResource Include="Migrations/0002_auth_sessions.sql" LogicalName="Migrations.0002_auth_sessions.sql" />
+    <EmbeddedResource Include="Migrations/0003_auth_rate_limits.sql" LogicalName="Migrations.0003_auth_rate_limits.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <PackageReference Include="Isopoh.Cryptography.Argon2" Version="2.0.0" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
 </Project>

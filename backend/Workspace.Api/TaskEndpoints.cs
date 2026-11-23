@@ -24,7 +24,67 @@ public static class TaskEndpoints
     private static Task<IResult> UpdateTask(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory) =>
         ChangeTask(context, configuration, loggerFactory, "update_task");
 
-    private static async Task<IResult> ChangeTask(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory, string expectedAction)
+    internal static bool TryId(JsonElement value, out long id)
+    {
+        id = 0;
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            if (value.TryGetInt64(out id)) return id > 0;
+            if (value.TryGetDouble(out var number) && number is >= 1 and < 1e14 && number == Math.Truncate(number))
+            {
+                id = (long)number;
+                return true;
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.True)
+        {
+            id = 1;
+            return true;
+        }
+        else if (value.ValueKind == JsonValueKind.String && WorkspacePreviewEndpoint.ParsePositiveId(value.GetString()) is long parsed)
+        {
+            id = parsed;
+            return true;
+        }
+        return false;
+    }
+
+    internal static async Task<bool> CheckWriter(HttpContext context, NpgsqlConnection connection,
+        NpgsqlTransaction transaction, long? taskId = null)
+    {
+        var id = (long)context.Items["WorkspaceUserId"]!;
+        // Laravel already holds the workspace write lock for signed requests.
+        if (context.Items["WorkspacePasswordVersion"] is not long version)
+        {
+            await using var actor = new NpgsqlCommand("SELECT 1 FROM users WHERE id = @id", connection, transaction);
+            actor.Parameters.AddWithValue("id", id);
+            return await actor.ExecuteScalarAsync(context.RequestAborted) is not null;
+        }
+        if (taskId is null) return await WorkspacePreviewEndpoint.CheckWriteSession(context, transaction);
+
+        // A lifecycle change may touch a repeat series owned by a different member.
+        // Lock both users in ID order before any task row locks, as the repeat runner locks the owner first.
+        await using var writer = new NpgsqlCommand("""
+            SELECT id, password_version FROM users
+            WHERE id = @id OR id = (
+                SELECT b.user_id FROM tasks t
+                JOIN task_lists l ON l.id = t.list_id AND l.user_id = t.user_id AND l.board_id = t.board_id
+                JOIN boards b ON b.id = l.board_id AND b.user_id = l.user_id
+                JOIN corporate_account_members m ON m.corporate_account_id = b.corporate_account_id
+                WHERE t.id = @task AND m.user_id = @id AND m.accepted_at IS NOT NULL
+            )
+            ORDER BY id FOR NO KEY UPDATE
+            """, connection, transaction);
+        writer.Parameters.AddWithValue("id", id);
+        writer.Parameters.AddWithValue("task", taskId.Value);
+        await using var row = await writer.ExecuteReaderAsync(context.RequestAborted);
+        var authorized = false;
+        while (await row.ReadAsync(context.RequestAborted))
+            if (row.GetInt64(0) == id && row.GetInt64(1) == version) authorized = true;
+        return authorized;
+    }
+
+    internal static async Task<IResult> ChangeTask(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory, string expectedAction, JsonElement? supplied = null)
     {
         var userId = (long)context.Items["WorkspaceUserId"]!;
         long taskId;
@@ -32,12 +92,14 @@ public static class TaskEndpoints
         string? title = null;
         try
         {
-            using var document = await JsonDocument.ParseAsync(context.Request.Body);
-            var input = document.RootElement;
+            using var document = supplied is null
+                ? await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted) : null;
+            var input = supplied ?? document!.RootElement;
             if (input.ValueKind != JsonValueKind.Object
                 || !input.TryGetProperty("action", out var action) || action.GetString() != expectedAction
-                || !input.TryGetProperty("task_id", out var task) || !task.TryGetInt64(out taskId) || taskId <= 0)
-                return Error(422, "Некорректная задача.");
+                || !input.TryGetProperty("task_id", out var task) || !TryId(task, out taskId))
+                return Error(422, expectedAction == "update_task"
+                    ? "Название задачи должно содержать от 1 до 240 символов." : "Некорректная задача.");
             if (expectedAction == "toggle_task")
             {
                 if (!input.TryGetProperty("is_completed", out var state)
@@ -54,7 +116,10 @@ public static class TaskEndpoints
                     return Error(422, "Название задачи должно содержать от 1 до 240 символов.");
             }
         }
-        catch (JsonException) { return Error(400, "Invalid JSON request"); }
+        catch (Exception exception) when (exception is JsonException || supplied is not null && exception is InvalidOperationException)
+        {
+            return Error(400, "Invalid JSON request");
+        }
         catch (InvalidOperationException) { return Error(422, "Некорректная задача."); }
 
         var connectionString = configuration.GetConnectionString("Workspace");
@@ -64,12 +129,8 @@ public static class TaskEndpoints
             await using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(context.RequestAborted);
             await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, context.RequestAborted);
-            await using (var findUser = new NpgsqlCommand("SELECT id FROM users WHERE id = @user_id", connection, transaction))
-            {
-                findUser.Parameters.Add("user_id", NpgsqlDbType.Bigint).Value = userId;
-                if (await findUser.ExecuteScalarAsync(context.RequestAborted) is null)
-                    return Error(401, "Требуется войти в аккаунт.");
-            }
+            if (!await TaskEndpoints.CheckWriter(context, connection, transaction))
+                return Error(401, "Требуется войти в аккаунт.");
             const string findTask = """
                 SELECT tasks.id FROM tasks
                 JOIN task_lists AS lists ON lists.id = tasks.list_id AND lists.user_id = tasks.user_id

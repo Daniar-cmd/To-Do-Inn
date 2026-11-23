@@ -1,0 +1,28 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS api-build
+WORKDIR /src
+COPY backend/Workspace.Api/Workspace.Api.csproj backend/Workspace.Api/
+RUN dotnet restore backend/Workspace.Api/Workspace.Api.csproj
+COPY backend/Workspace.Api/ backend/Workspace.Api/
+COPY logos/ToDo-Inn-logo-compact.png logos/
+RUN dotnet publish backend/Workspace.Api/Workspace.Api.csproj -c Release --no-restore -o /publish /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS api
+WORKDIR /app
+COPY --from=api-build /publish/ ./
+RUN mkdir -m 0700 keys && chown "$APP_UID" keys
+USER $APP_UID
+ENTRYPOINT ["dotnet", "Workspace.Api.dll"]
+
+FROM node:24-bookworm-slim AS web-build
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY vite.config.ts gulpfile.ts tsconfig.json ./
+COPY frontend/ frontend/
+COPY logos/ToDo-Inn-logo.svg logos/
+RUN npm run build
+
+FROM caddy:2-alpine AS web
+COPY --from=web-build /src/dist/ /srv/
+COPY public/favicon.svg /srv/favicon.svg
+COPY backend/Caddyfile.local-docker /etc/caddy/Caddyfile

@@ -1,5 +1,4 @@
 using System.Data;
-using System.Globalization;
 using System.Text.Json;
 using Npgsql;
 using NpgsqlTypes;
@@ -12,21 +11,25 @@ public static class TaskLifecycleEndpoint
     public static Task<IResult> StopRepeat(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory) =>
         Change(context, configuration, loggerFactory, "stop_task_repeat");
 
-    private static async Task<IResult> Change(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory, string action)
+    internal static async Task<IResult> Change(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory, string action, JsonElement? supplied = null)
     {
         var userId = (long)context.Items["WorkspaceUserId"]!;
         long taskId;
         try
         {
-            using var document = await JsonDocument.ParseAsync(context.Request.Body);
-            var input = document.RootElement;
+            using var document = supplied is null
+                ? await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted) : null;
+            var input = supplied ?? document!.RootElement;
             if (input.ValueKind != JsonValueKind.Object
                 || !input.TryGetProperty("action", out var actualAction) || actualAction.ValueKind != JsonValueKind.String
                 || actualAction.GetString() != action
-                || !input.TryGetProperty("task_id", out var task) || !TryId(task, out taskId))
+                || !input.TryGetProperty("task_id", out var task) || !TaskEndpoints.TryId(task, out taskId))
                 return Error(422, "Некорректная задача.");
         }
-        catch (JsonException) { return Error(400, "Invalid JSON request"); }
+        catch (Exception exception) when (exception is JsonException || supplied is not null && exception is InvalidOperationException)
+        {
+            return Error(400, "Invalid JSON request");
+        }
 
         var connectionString = configuration.GetConnectionString("Workspace");
         if (string.IsNullOrWhiteSpace(connectionString)) return Error(503, "Сервис задач временно недоступен.");
@@ -35,12 +38,8 @@ public static class TaskLifecycleEndpoint
             await using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(context.RequestAborted);
             await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, context.RequestAborted);
-            await using (var findUser = new NpgsqlCommand("SELECT id FROM users WHERE id = @user_id", connection, transaction))
-            {
-                findUser.Parameters.Add("user_id", NpgsqlDbType.Bigint).Value = userId;
-                if (await findUser.ExecuteScalarAsync(context.RequestAborted) is null)
-                    return Error(401, "Требуется войти в аккаунт.");
-            }
+            if (!await TaskEndpoints.CheckWriter(context, connection, transaction, taskId))
+                return Error(401, "Требуется войти в аккаунт.");
 
             const string findTaskSql = """
                 SELECT boards.user_id, boards.id, tasks.is_completed, tasks.repeat_interval,
@@ -133,16 +132,6 @@ public static class TaskLifecycleEndpoint
             loggerFactory.CreateLogger("WorkspaceTasks").LogError(exception, "Task lifecycle change failed: {Action}", action);
             return Error(503, "Сервис задач временно недоступен.");
         }
-    }
-
-    private static bool TryId(JsonElement value, out long id)
-    {
-        id = 0;
-        if (value.ValueKind == JsonValueKind.Number) return value.TryGetInt64(out id) && id > 0;
-        if (value.ValueKind != JsonValueKind.String) return false;
-        var text = value.GetString();
-        return text is not null && text.Length > 0 && text[0] != '0'
-            && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out id) && id > 0;
     }
 
     private static IResult Error(int status, string message) =>

@@ -9,7 +9,11 @@ public static class CreateTaskEndpoint
 {
     private static readonly char[] TrimChars = [' ', '\n', '\r', '\t', '\v', '\0'];
 
-    public static async Task<IResult> Create(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory)
+    public static Task<IResult> Create(HttpContext context, IConfiguration configuration, ILoggerFactory loggerFactory) =>
+        CreateFromInput(context, configuration, loggerFactory, null);
+
+    internal static async Task<IResult> CreateFromInput(HttpContext context, IConfiguration configuration,
+        ILoggerFactory loggerFactory, JsonElement? supplied)
     {
         var userId = (long)context.Items["WorkspaceUserId"]!;
         long listId;
@@ -30,12 +34,13 @@ public static class CreateTaskEndpoint
 
         try
         {
-            using var document = await JsonDocument.ParseAsync(context.Request.Body);
-            var input = document.RootElement;
+            using var document = supplied is null
+                ? await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted) : null;
+            var input = supplied ?? document!.RootElement;
             if (input.ValueKind != JsonValueKind.Object
                 || !input.TryGetProperty("action", out var action) || action.ValueKind != JsonValueKind.String
                 || action.GetString() != "create_task"
-                || !input.TryGetProperty("list_id", out var list) || !TryId(list, out listId)
+                || !input.TryGetProperty("list_id", out var list) || !TaskEndpoints.TryId(list, out listId)
                 || !input.TryGetProperty("title", out var titleValue) || titleValue.ValueKind != JsonValueKind.String)
                 return Error(422, "Введите название задачи (не более 240 символов).");
             title = titleValue.GetString()!.Trim(TrimChars);
@@ -68,7 +73,7 @@ public static class CreateTaskEndpoint
             if (newFlagName.EnumerateRunes().Count() > 40 || HasControls(newFlagName)
                 || (newFlagName != "" && hasFlag))
                 return Error(422, "Проверьте выбранный флаг.");
-            flagId = hasFlag && TryId(flagValue, out var parsedFlag) ? parsedFlag : null;
+            flagId = hasFlag && TaskEndpoints.TryId(flagValue, out var parsedFlag) ? parsedFlag : null;
 
             if (!TryNullableString(input, "due_date", out dueText)
                 || (dueText is not null && !TryCurrentDate(dueText, out _)))
@@ -82,7 +87,10 @@ public static class CreateTaskEndpoint
                 || (repeat is not null && dueDate is null && deadline is null))
                 return Error(422, "Выберите одну дату или дедлайн для задачи с повторением.");
         }
-        catch (JsonException) { return Error(400, "Invalid JSON request"); }
+        catch (Exception exception) when (exception is JsonException || supplied is not null && exception is InvalidOperationException)
+        {
+            return Error(400, "Invalid JSON request");
+        }
 
         var connectionString = configuration.GetConnectionString("Workspace");
         if (string.IsNullOrWhiteSpace(connectionString)) return Error(503, "Сервис задач временно недоступен.");
@@ -91,12 +99,8 @@ public static class CreateTaskEndpoint
             await using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(context.RequestAborted);
             await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, context.RequestAborted);
-            await using (var findUser = new NpgsqlCommand("SELECT id FROM users WHERE id = @user_id", connection, transaction))
-            {
-                findUser.Parameters.Add("user_id", NpgsqlDbType.Bigint).Value = userId;
-                if (await findUser.ExecuteScalarAsync(context.RequestAborted) is null)
-                    return Error(401, "Требуется войти в аккаунт.");
-            }
+            if (!await TaskEndpoints.CheckWriter(context, connection, transaction))
+                return Error(401, "Требуется войти в аккаунт.");
 
             const string findListSql = """
                 SELECT lists.board_id, boards.user_id FROM task_lists AS lists
@@ -257,17 +261,7 @@ public static class CreateTaskEndpoint
         return true;
     }
 
-    private static bool TryId(JsonElement value, out long id)
-    {
-        id = 0;
-        if (value.ValueKind == JsonValueKind.Number) return value.TryGetInt64(out id) && id > 0;
-        if (value.ValueKind != JsonValueKind.String) return false;
-        var text = value.GetString();
-        return text is not null && text.Length > 0 && text[0] != '0'
-            && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out id) && id > 0;
-    }
-
-    private static bool TryCurrentDate(string value, out DateOnly date)
+    internal static bool TryCurrentDate(string value, out DateOnly date)
     {
         date = default;
         return value.Length == 10 && DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date)
